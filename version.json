@@ -1,4 +1,4 @@
 {
-  "version": "v0.2.1",
-  "note": "### Forenyx AI 0.2.1\n- 解决 安装、更新过程中出现的mac os打包元数据warning"
+  "version": "v0.2.2",
+  "note": "### Forenyx AI 0.2.2\n- 修复 Bun 编译产物下 uvm-testcase-auto 找不到 python 脚本路径的问题"
 }
