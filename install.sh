@@ -81,12 +81,7 @@ if [ -z "$VERSION_DATA" ]; then
 fi
 
 # Simple JSON parser in shell
-LATEST_VERSION=$(echo "$VERSION_DATA" | grep -o '"version": "[^"]*' | grep -o '[^"]$' | tr -d '"')
-
-if [ -z "$LATEST_VERSION" ]; then
-    # Fallback regex in case of different formatting
-    LATEST_VERSION=$(echo "$VERSION_DATA" | grep -o '"version":\s*"[^"]*"' | head -n1 | cut -d'"' -f4)
-fi
+LATEST_VERSION=$(echo "$VERSION_DATA" | grep '"version"' | head -n 1 | cut -d'"' -f4)
 
 if [ -z "$LATEST_VERSION" ]; then
     echo -e "${RED}Error: Could not parse version from version.json${NC}"
@@ -156,7 +151,7 @@ case "$1" in
             exit 1
         fi
         
-        LATEST_VERSION=$(echo "$VERSION_DATA" | grep -o '"version":\s*"[^"]*"' | head -n1 | cut -d'"' -f4)
+        LATEST_VERSION=$(echo "$VERSION_DATA" | grep '"version"' | head -n 1 | cut -d'"' -f4)
         if [ -z "$LATEST_VERSION" ]; then
             echo -e "\033[0;31mError: Could not parse version from version.json\033[0m"
             exit 1
