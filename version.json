@@ -1,3 +1,4 @@
 {
-  "version": "v0.2.0"
+  "version": "v0.2.0",
+  "note": "### Forenyx AI 0.2.0\n- 解决 安装、更新过程中出现的mac os打包元数据warning"
 }
