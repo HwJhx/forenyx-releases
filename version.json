@@ -1,4 +1,4 @@
 {
-  "version": "v0.2.2",
-  "note": "### Forenyx AI 0.2.2\n- 修复 Bun 编译产物下 uvm-testcase-auto 找不到 python 脚本路径的问题"
+  "version": "v0.2.3",
+  "note": "### Forenyx AI 0.2.3\n- sync skills summary and environment variables info"
 }
