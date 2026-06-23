@@ -188,8 +188,12 @@ case "$1" in
         
         # Move everything from update_tmp/forenyx to bin/
         cp -f "$BIN_DIR/update_tmp/forenyx/forenyx-cli" "$BIN_DIR/forenyx-cli" 2>/dev/null || true
+        cp -f "$BIN_DIR/update_tmp/forenyx/package.json" "$BIN_DIR/package.json" 2>/dev/null || true
         cp -f "$BIN_DIR/update_tmp/forenyx/photon_rs_bg.wasm" "$BIN_DIR/photon_rs_bg.wasm" 2>/dev/null || true
         cp -rf "$BIN_DIR/update_tmp/forenyx/node_modules" "$BIN_DIR/" 2>/dev/null || true
+        cp -rf "$BIN_DIR/update_tmp/forenyx/theme" "$BIN_DIR/" 2>/dev/null || true
+        cp -rf "$BIN_DIR/update_tmp/forenyx/assets" "$BIN_DIR/" 2>/dev/null || true
+        cp -rf "$BIN_DIR/update_tmp/forenyx/export-html" "$BIN_DIR/" 2>/dev/null || true
         
         # Refresh builtin skills
         if [ -d "$BIN_DIR/update_tmp/forenyx/skills" ]; then
