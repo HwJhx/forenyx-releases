@@ -247,3 +247,35 @@ forenyx uninstall
 | 变量 | 说明 |
 |------|------|
 | `VENV_PYTHON` | Python 虚拟环境的绝对路径，如 `/Users/jhx/anaconda3/envs/gen_testplan`。可通过 `conda env list` 查看所有可用环境后选择。 |
+
+---
+
+## ⚖️ 开源致谢与授权声明
+
+Forenyx AI CLI (Based on Pi) 是基于开源项目 [earendil-works/pi](https://github.com/earendil-works/pi) 进行二次开发与定制的闭源商业分发版本。我们对 `pi` 及其开源社区的杰出工作表示由衷的感谢。
+
+根据 **MIT 许可证 (MIT License)** 的合规要求，在此保留并附带原项目的版权声明及许可条款全文：
+
+```text
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
