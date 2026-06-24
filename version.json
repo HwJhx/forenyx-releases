@@ -1,4 +1,4 @@
 {
-  "version": "v0.2.4",
-  "note": "### Forenyx AI 0.2.4\n- fix: 修复首次启动配置技能环境变量时若成功 /login，进入主界面仍然提示过期无模型警告或 No API key 报错的缺陷\n- legal: 补充基于 earendil-works/pi 开源项目的 MIT 协议版权致谢与合规声明"
+  "version": "v0.2.5",
+  "note": "### Forenyx AI 0.2.5 fix: 修复大模型底层系统提示词自称 pi 的品牌人设缺陷，全面转换为 Forenyx AI"
 }
