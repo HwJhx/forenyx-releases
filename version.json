@@ -1,4 +1,4 @@
 {
-  "version": "v0.2.5",
-  "note": "### Forenyx AI 0.2.5 fix: 修复大模型底层系统提示词自称 pi 的品牌人设缺陷，全面转换为 Forenyx AI"
+  "version": "v0.2.6",
+  "note": "### Forenyx AI 0.2.6 feat:\n - 新增FSDB波形抽取Skill /uvm-fsdb-extract \n - 新增FSDB波形根因分析Skill: /uvm-testcase-wave-rca"
 }
