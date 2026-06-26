@@ -197,6 +197,11 @@ forenyx uninstall
 │   │    ├─ uvm-testcase-compile-sim             │     │
 │   │    └─ uvm-testcase-debug-failure           │     │
 │   └────────────────────────────────────────────┘     │
+│                                                      │
+│   ┌────────────────────────────────────────────┐     │
+│   │  uvm-testcase-wave-rca ⚡                  │     │
+│   │    └─ uvm-fsdb-wave-extract                │     │
+│   └────────────────────────────────────────────┘     │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -219,6 +224,8 @@ forenyx uninstall
 | `uvm-testcase-gen-testcase` | 根据 testplan 生成单个 TC（TC 类 + vseq），按需增量更新 scoreboard | `$0` WORK_DIR, `$1` testplan .md, `$2` TC名（可选） | `tc_<name>.sv`, `<name>_vseq.sv` |
 | `uvm-testcase-compile-sim` | 执行 VCS 编译与仿真，解析日志生成单 TC 报告并同步回归状态 | `$0` WORK_DIR, `$1` TC名 | `com.log`, `run.log`, `<TC>_report.md`, `regression_status.md` |
 | `uvm-testcase-debug-failure` | 诊断编译/仿真失败：编译错误 AI 修复，仿真错误输出根因分析报告 | `$0` WORK_DIR, `$1` TC名 | 诊断报告 + 更新 `<TC>_report.md` |
+| `uvm-testcase-wave-rca` ⚡ | 仿真失败的**波形迭代根因分析**：日志优先 → 波形取证 → RTL 下钻链式迭代，编排调用 `uvm-fsdb-wave-extract` 取值；只分析不改文件，输出结构化根因报告（区分 TB激励缺失/RTL bug/配置错） | `$0` WORK_DIR, `$1` TC名, `$2` RTL 文件/目录 | `wave_rca_report.json` |
+| `uvm-fsdb-wave-extract` | **纯波形取值工具**：经 Verdi NPI 从 FSDB 按时间窗提取指定信号跳变历史 → 紧凑 JSON。信号入参自适应（先精确名查、查不到当正则模糊搜）；只取值不诊断，供 `uvm-testcase-wave-rca` 每轮调用。需仿真主机 + Verdi（NPI） | `$0` FSDB, `$1` TOP scope, `$2` START, `$3` END, `$4` SIGNALS, `$5` MAX_CHANGES（可选）, `$6` OUTPUT（可选） | `fsdb_extracted_wave.json` |
 | `uvm-coverage-closure` | 分析覆盖率缺口，人工确认 Dead Code 后向 testplan 追加补充条目 | `$0` WORK_DIR, `$1` testplan .md, `--spec` / `--target-func` / `--target-code`（可选） | `coverage_gap_report.md` + 追加 testplan 条目 |
 | `uvm-testcase-auto` ⚡ | 逐 TC 执行「生成 → 编译仿真 → 自动修复」闭环并汇总报告；完成后 append `"4.{分组名}"` / `"4.全部"` / `"4.指定TC(N个)"` | `$0` WORK_DIR, `$1` testplan .md | 终端汇总报告 + 各 TC 报告文件 |
 
@@ -247,6 +254,8 @@ forenyx uninstall
 | 变量 | 说明 |
 |------|------|
 | `VENV_PYTHON` | Python 虚拟环境的绝对路径，如 `/Users/jhx/anaconda3/envs/gen_testplan`。可通过 `conda env list` 查看所有可用环境后选择。 |
+
+> **波形 skill（`uvm-testcase-wave-rca` / `uvm-fsdb-wave-extract`）不走 `VENV_PYTHON`**：它们用 Verdi 自带的 NPI Python 环境，需在**仿真主机（Linux）**上设 `VERDI_HOME`（如 `/opt/synopsys/verdi/W-2024.09-SP1`），其余（`LD_LIBRARY_PATH` 含 Qt5、`PYTHONPATH`、`$VPY`）由 `uvm-fsdb-wave-extract/scripts/setup_env.csh` 自动配好。需 Verdi license。
 
 ---
 
