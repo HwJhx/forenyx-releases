@@ -141,8 +141,38 @@ BIN_DIR="$FORENYX_DIR/bin"
 LIBEXEC_DIR="$FORENYX_DIR/libexec"
 AGENT_DIR="$FORENYX_DIR/agent"
 
-# Command interceptors
+## Command interceptors
 case "$1" in
+    --version|-v)
+        if [ -f "$LIBEXEC_DIR/package.json" ]; then
+            CURRENT_VERSION=$(grep '"version"' "$LIBEXEC_DIR/package.json" | head -n 1 | cut -d'"' -f4)
+        else
+            CURRENT_VERSION="v0.2.7"
+        fi
+        
+        RELEASES_REPO="HwJhx/forenyx-releases"
+        VERSION_URL="https://raw.githubusercontent.com/$RELEASES_REPO/main/version.json"
+        
+        echo -e "forenyx $CURRENT_VERSION (based on pi v0.79.10)"
+        
+        # Check remote version with a tight 2s connect timeout so offline systems don't block
+        VERSION_DATA=$(curl -fsSL --connect-timeout 2 --max-time 3 "$VERSION_URL" 2>/dev/null || echo "")
+        
+        if [ -n "$VERSION_DATA" ]; then
+            LATEST_VERSION=$(echo "$VERSION_DATA" | grep '"version"' | head -n 1 | cut -d'"' -f4)
+            CUR_VER_CLEAN=$(echo "$CURRENT_VERSION" | tr -d 'v[:space:]')
+            LAT_VER_CLEAN=$(echo "$LATEST_VERSION" | tr -d 'v[:space:]')
+            
+            if [ "$CUR_VER_CLEAN" = "$LAT_VER_CLEAN" ]; then
+                echo -e "\033[0;32m✓ You are already on the latest version.\033[0m"
+            else
+                echo -e "\033[0;33m⚠️ New version \033[1;32m$LATEST_VERSION\033[0;33m is available. Run \033[1;36mforenyx update\033[0;33m to upgrade.\033[0m"
+            fi
+        else
+            echo -e "\033[0;90mNote: Failed to connect to the update server. Skipping update check.\033[0m"
+        fi
+        exit 0
+        ;;
     update)
         echo -e "\033[0;36m=====================================================\033[0m"
         echo -e "\033[0;36m\033[1m           Updating Forenyx AI Client                \033[0m"
@@ -161,6 +191,21 @@ case "$1" in
         if [ -z "$LATEST_VERSION" ]; then
             echo -e "\033[0;31mError: Could not parse version from version.json\033[0m"
             exit 1
+        fi
+        
+        # Check current version and skip download if it's already the latest
+        if [ -f "$LIBEXEC_DIR/package.json" ]; then
+            CURRENT_VERSION=$(grep '"version"' "$LIBEXEC_DIR/package.json" | head -n 1 | cut -d'"' -f4)
+        else
+            CURRENT_VERSION="v0.2.7"
+        fi
+        
+        CUR_VER_CLEAN=$(echo "$CURRENT_VERSION" | tr -d 'v[:space:]')
+        LAT_VER_CLEAN=$(echo "$LATEST_VERSION" | tr -d 'v[:space:]')
+        
+        if [ "$CUR_VER_CLEAN" = "$LAT_VER_CLEAN" ]; then
+            echo -e "\033[0;32m✓ You are already on the latest version ($CURRENT_VERSION). No update required.\033[0m"
+            exit 0
         fi
         
         # Detect platform
@@ -201,7 +246,7 @@ case "$1" in
         cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/theme" "$LIBEXEC_DIR/" 2>/dev/null || true
         cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/assets" "$LIBEXEC_DIR/" 2>/dev/null || true
         cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/export-html" "$LIBEXEC_DIR/" 2>/dev/null || true
-
+ 
         # Refresh built-in skills (encrypted blob) and clean up any legacy plaintext.
         rm -rf "$AGENT_DIR/skills/builtin"
         
