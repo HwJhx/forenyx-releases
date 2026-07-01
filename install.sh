@@ -145,7 +145,7 @@ AGENT_DIR="$FORENYX_DIR/agent"
 case "$1" in
     --version|-v)
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
-            CURRENT_VERSION=$(grep '"version"' "$LIBEXEC_DIR/package.json" | head -n 1 | cut -d'"' -f4)
+            CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
         else
             CURRENT_VERSION="v0.2.7"
         fi
@@ -195,7 +195,7 @@ case "$1" in
         
         # Check current version and skip download if it's already the latest
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
-            CURRENT_VERSION=$(grep '"version"' "$LIBEXEC_DIR/package.json" | head -n 1 | cut -d'"' -f4)
+            CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
         else
             CURRENT_VERSION="v0.2.7"
         fi
