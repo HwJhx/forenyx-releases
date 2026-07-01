@@ -205,7 +205,7 @@ case "$1" in
         RELEASES_REPO="HwJhx/forenyx-releases"
         VERSION_URL="https://raw.githubusercontent.com/$RELEASES_REPO/main/version.json"
         
-        VERSION_DATA=$(curl -fsSL "$VERSION_URL" || echo "")
+        VERSION_DATA=$(curl -fsSL --connect-timeout 5 "$VERSION_URL" || echo "")
         if [ -z "$VERSION_DATA" ]; then
             echo -e "\033[0;31mError: Failed to fetch version info from $VERSION_URL\033[0m"
             exit 1
@@ -217,7 +217,7 @@ case "$1" in
             exit 1
         fi
         
-        # Check current version and skip download if it's already the latest
+        # Check current version and skip if it's already the latest
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
             CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
         else
@@ -232,58 +232,12 @@ case "$1" in
             exit 0
         fi
         
-        # Detect platform
-        OS_TYPE=$(uname -s | tr '[:upper:]' '[:lower:]')
-        ARCH_TYPE=$(uname -m)
-        PLATFORM=""
-        if [ "$OS_TYPE" = "darwin" ]; then
-            [ "$ARCH_TYPE" = "arm64" ] && PLATFORM="darwin-arm64" || PLATFORM="darwin-x64"
-        elif [ "$OS_TYPE" = "linux" ]; then
-            [ "$ARCH_TYPE" = "x86_64" ] && PLATFORM="linux-x64" || PLATFORM="linux-arm64"
-        fi
-        
-        if [ -z "$PLATFORM" ]; then
-            echo -e "\033[0;31mError: Unsupported platform during update.\033[0m"
+        # Divergence detected: fetch and execute the latest install script to achieve a full self-update securely.
+        echo -e "New version \033[1;32m$LATEST_VERSION\033[0m is available. Pulling the installer..."
+        if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash; then
+            echo -e "\033[0;31mError: Update failed during execution of the remote install script.\033[0m"
             exit 1
         fi
-        
-        TARBALL_NAME="forenyx-$PLATFORM.tar.gz"
-        DOWNLOAD_URL="https://github.com/$RELEASES_REPO/releases/download/$LATEST_VERSION/$TARBALL_NAME"
-        
-        echo -e "Downloading version \033[0;32m$LATEST_VERSION\033[0m..."
-        TMP_TARBALL="/tmp/$TARBALL_NAME"
-        if ! curl -f -L --progress-bar "$DOWNLOAD_URL" -o "$TMP_TARBALL"; then
-            echo -e "\033[0;31mError: Download failed. The release asset may not be uploaded yet.\033[0m"
-            exit 1
-        fi
-        
-        if ! tar -xzf "$TMP_TARBALL" -C "$LIBEXEC_DIR/update_tmp/"; then
-            echo -e "\033[0;31mError: Failed to extract update archive.\033[0m"
-            rm -rf "$LIBEXEC_DIR/update_tmp" "$TMP_TARBALL"
-            exit 1
-        fi
-        
-        # Move everything from update_tmp/forenyx to libexec/
-        if ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/forenyx-cli" "$LIBEXEC_DIR/forenyx-cli" || \
-           ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/package.json" "$LIBEXEC_DIR/package.json" || \
-           ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/photon_rs_bg.wasm" "$LIBEXEC_DIR/photon_rs_bg.wasm" || \
-           ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/skills.pack" "$LIBEXEC_DIR/skills.pack" || \
-           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/node_modules" "$LIBEXEC_DIR/" || \
-           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/theme" "$LIBEXEC_DIR/" || \
-           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/assets" "$LIBEXEC_DIR/" || \
-           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/export-html" "$LIBEXEC_DIR/"; then
-            echo -e "\033[0;31mError: Failed to deploy updated binaries and resources.\033[0m"
-            rm -rf "$LIBEXEC_DIR/update_tmp"
-            exit 1
-        fi
- 
-        # Refresh built-in skills (encrypted blob) and clean up any legacy plaintext.
-        rm -rf "$AGENT_DIR/skills/builtin"
-        
-        # Cleanup tmp
-        rm -rf "$LIBEXEC_DIR/update_tmp" "$TMP_TARBALL"
-        
-        echo -e "\033[0;32m\033[1mForenyx AI has been successfully updated to $LATEST_VERSION!\033[0m"
         exit 0
         ;;
     uninstall)
