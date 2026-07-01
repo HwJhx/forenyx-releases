@@ -23,6 +23,7 @@ echo -e "${RED}${BOLD}=====================================================${NC}
 
 FORENYX_DIR="$HOME/.forenyx"
 BIN_DIR="$FORENYX_DIR/bin"
+LIBEXEC_DIR="$FORENYX_DIR/libexec"
 
 if [ ! -d "$FORENYX_DIR" ]; then
     echo -e "${YELLOW}Forenyx AI is not installed (~/.forenyx directory not found).${NC}"
@@ -39,7 +40,7 @@ KEEP_DATA=${KEEP_DATA:-y}
 
 if [ "$KEEP_DATA" = "y" ] || [ "$KEEP_DATA" = "Y" ]; then
     echo -e "${BLUE}Keeping configurations and skills. Cleaning binaries...${NC}"
-    rm -rf "$BIN_DIR"
+    rm -rf "$BIN_DIR" "$LIBEXEC_DIR"
     echo -e "  - Cleared binaries and wrappers."
 else
     echo -e "${RED}Completely deleting all Forenyx AI data...${NC}"

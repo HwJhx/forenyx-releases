@@ -58,11 +58,14 @@ echo -e "  - Platform: ${GREEN}$PLATFORM${NC}"
 echo -e "${BLUE}[2/5] Setting up directories...${NC}"
 FORENYX_DIR="$HOME/.forenyx"
 BIN_DIR="$FORENYX_DIR/bin"
+LIBEXEC_DIR="$FORENYX_DIR/libexec"
 AGENT_DIR="$FORENYX_DIR/agent"
 
 mkdir -p "$FORENYX_DIR"
 mkdir -p "$BIN_DIR"
-mkdir -p "$AGENT_DIR/skills/builtin"
+mkdir -p "$LIBEXEC_DIR"
+# Built-in skills are shipped as an encrypted blob (skills.pack), not plaintext.
+# Only the user's own custom skills live under agent/skills.
 mkdir -p "$AGENT_DIR/skills/custom"
 
 # 3. Download and Extract Binary Package
@@ -100,25 +103,27 @@ if ! curl -L --progress-bar "$DOWNLOAD_URL" -o "$TMP_TARBALL"; then
     exit 1
 fi
 
-echo -e "  - Extracting to $BIN_DIR..."
+echo -e "  - Extracting to $LIBEXEC_DIR..."
 # Clean old installation binaries first
-rm -rf "$BIN_DIR"/*
+rm -rf "$LIBEXEC_DIR"/*
 
 # Extract tarball.
 # The tarball contains a folder named "forenyx", inside which has all the files.
 tar -xzf "$TMP_TARBALL" -C /tmp/
-# Move contents to ~/.forenyx/bin/
-cp -rf /tmp/forenyx/* "$BIN_DIR/"
+# Move contents to ~/.forenyx/libexec/
+cp -rf /tmp/forenyx/* "$LIBEXEC_DIR/"
 rm -rf /tmp/forenyx "$TMP_TARBALL"
 
 # Deploy Builtin Skills
-echo -e "  - Refreshing system built-in skills..."
-rm -rf "$AGENT_DIR/skills/builtin"/*
-if [ -d "$BIN_DIR/skills" ]; then
-    cp -rf "$BIN_DIR/skills/"* "$AGENT_DIR/skills/builtin/"
-    # Remove raw skills folder from bin to keep it clean
-    rm -rf "$BIN_DIR/skills"
-fi
+# Built-in skills ship as an encrypted blob (skills.pack) that stays alongside the
+# binary in $LIBEXEC_DIR; the CLI decrypts it to a temp dir at runtime. We no longer
+# extract browsable plaintext skills into ~/.forenyx/agent/skills/builtin.
+echo -e "  - Installing encrypted built-in skills..."
+# Remove any legacy plaintext built-in skills from previous versions.
+rm -rf "$AGENT_DIR/skills/builtin"
+# Drop a stray plaintext skills/ dir if an older tarball shipped one.
+rm -rf "$BIN_DIR/skills"
+rm -rf "$LIBEXEC_DIR/skills"
 
 # 4. Generate Forenyx CLI Shell Wrapper
 echo -e "${BLUE}[4/5] Creating command wrapper...${NC}"
@@ -133,6 +138,7 @@ cat << 'EOF' > "$WRAPPER_FILE"
 
 FORENYX_DIR="$HOME/.forenyx"
 BIN_DIR="$FORENYX_DIR/bin"
+LIBEXEC_DIR="$FORENYX_DIR/libexec"
 AGENT_DIR="$FORENYX_DIR/agent"
 
 # Command interceptors
@@ -182,27 +188,25 @@ case "$1" in
             exit 1
         fi
         
-        # Clean current bin files EXCEPT wrapper itself (to avoid script execution interrupt)
-        mkdir -p "$BIN_DIR/update_tmp"
-        tar -xzf "$TMP_TARBALL" -C "$BIN_DIR/update_tmp/"
+        # Clean current libexec files
+        mkdir -p "$LIBEXEC_DIR/update_tmp"
+        tar -xzf "$TMP_TARBALL" -C "$LIBEXEC_DIR/update_tmp/"
         
-        # Move everything from update_tmp/forenyx to bin/
-        cp -f "$BIN_DIR/update_tmp/forenyx/forenyx-cli" "$BIN_DIR/forenyx-cli" 2>/dev/null || true
-        cp -f "$BIN_DIR/update_tmp/forenyx/package.json" "$BIN_DIR/package.json" 2>/dev/null || true
-        cp -f "$BIN_DIR/update_tmp/forenyx/photon_rs_bg.wasm" "$BIN_DIR/photon_rs_bg.wasm" 2>/dev/null || true
-        cp -rf "$BIN_DIR/update_tmp/forenyx/node_modules" "$BIN_DIR/" 2>/dev/null || true
-        cp -rf "$BIN_DIR/update_tmp/forenyx/theme" "$BIN_DIR/" 2>/dev/null || true
-        cp -rf "$BIN_DIR/update_tmp/forenyx/assets" "$BIN_DIR/" 2>/dev/null || true
-        cp -rf "$BIN_DIR/update_tmp/forenyx/export-html" "$BIN_DIR/" 2>/dev/null || true
-        
-        # Refresh builtin skills
-        if [ -d "$BIN_DIR/update_tmp/forenyx/skills" ]; then
-            rm -rf "$AGENT_DIR/skills/builtin"/*
-            cp -rf "$BIN_DIR/update_tmp/forenyx/skills/"* "$AGENT_DIR/skills/builtin/"
-        fi
+        # Move everything from update_tmp/forenyx to libexec/
+        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/forenyx-cli" "$LIBEXEC_DIR/forenyx-cli" 2>/dev/null || true
+        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/package.json" "$LIBEXEC_DIR/package.json" 2>/dev/null || true
+        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/photon_rs_bg.wasm" "$LIBEXEC_DIR/photon_rs_bg.wasm" 2>/dev/null || true
+        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/skills.pack" "$LIBEXEC_DIR/skills.pack" 2>/dev/null || true
+        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/node_modules" "$LIBEXEC_DIR/" 2>/dev/null || true
+        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/theme" "$LIBEXEC_DIR/" 2>/dev/null || true
+        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/assets" "$LIBEXEC_DIR/" 2>/dev/null || true
+        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/export-html" "$LIBEXEC_DIR/" 2>/dev/null || true
+
+        # Refresh built-in skills (encrypted blob) and clean up any legacy plaintext.
+        rm -rf "$AGENT_DIR/skills/builtin"
         
         # Cleanup tmp
-        rm -rf "$BIN_DIR/update_tmp" "$TMP_TARBALL"
+        rm -rf "$LIBEXEC_DIR/update_tmp" "$TMP_TARBALL"
         
         echo -e "\033[0;32m\033[1mForenyx AI has been successfully updated to $LATEST_VERSION!\033[0m"
         exit 0
@@ -221,7 +225,7 @@ case "$1" in
         
         if [ "$KEEP_DATA" = "y" ] || [ "$KEEP_DATA" = "Y" ]; then
             echo -e "\033[0;34mKeeping configurations and skills. Cleaning binaries...\033[0m"
-            rm -rf "$BIN_DIR"
+            rm -rf "$BIN_DIR" "$LIBEXEC_DIR"
             echo -e "  - Cleared binaries and wrappers."
         else
             echo -e "\033[0;31mCompletely deleting all Forenyx AI data...\033[0m"
@@ -253,8 +257,8 @@ case "$1" in
 esac
 
 # Execute actual compiled binary
-export PI_PACKAGE_DIR="$BIN_DIR"
-exec "$BIN_DIR/forenyx-cli" "$@"
+export PI_PACKAGE_DIR="$LIBEXEC_DIR"
+exec "$LIBEXEC_DIR/forenyx-cli" "$@"
 EOF
 
 chmod +x "$WRAPPER_FILE"
