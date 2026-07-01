@@ -1,4 +1,4 @@
 {
   "version": "0.2.9",
-  "note": "### Forenyx AI 0.2.9 \n - 移除内置技能（Skills）中未定义的 $SKILL_DIR 依赖，统一重构为标准相对路径"
+  "note": "### Forenyx AI 0.2.9 \n - 移除内置技能（Skills）中未定义的 $SKILL_DIR 依赖，统一重构为标准相对路径 \n - - 在~/.forenyx/.env中单独配置 内置技能 ic-docx2md的api key"
 }

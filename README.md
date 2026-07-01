@@ -79,26 +79,21 @@ forenyx
 
 ---
 
-### 6. 配置内置技能 ic-docx2md（必须）
-如果您需要使用 `ic-docx2md` 内置技能，需要为其配置专用的 API 密钥：
+### 6. 配置内置技能 ic-docx2md 的多模态模型（可选）
+如果您需要使用 `ic-docx2md` 内置技能（用于一键转换 Spec 文档 docx 到 Markdown），需要为其配置专用的 API 密钥 和多模态模型：
 
-1. 进入技能目录：
-   ```bash
-   cd ~/.forenyx/agent/skills/builtin/ic-docx2md
-   ```
-2. 复制配置文件模板：
-   ```bash
-   cp .env_example .env
-   ```
-3. 编辑 `.env` 文件，将 `OPENAI_API_KEY` 替换为您的实际 API Key，其余配置保持默认即可：
-   ```ini
-   OPENAI_API_KEY="你的API Key"
-   OPENAI_API_BASE="https://api.siliconflow.cn"
-   ARK_MODEL_NAME='Qwen/Qwen3-VL-235B-A22B-Thinking'
-   OPENAI_MODEL_NAME='Pro/moonshotai/Kimi-K2.5'
-   MAX_OUTPUT_TOKENS=32768
-   TEMPERATURE=0.1
-   ```
+直接编辑安装时自动初始化生成的全局配置文件 **`~/.forenyx/.env`**：
+```bash
+vi ~/.forenyx/.env
+```
+将 `OPENAI_API_KEY` 替换为您的实际 API Key（默认以 SiliconFlow 接入），其余配置按需调整后保存即可：
+```ini
+OPENAI_API_KEY="YOUR-API-KEY"
+OPENAI_API_BASE="https://api.siliconflow.cn"
+ARK_MODEL_NAME='Qwen/Qwen3.5-397B-A17B'
+MAX_OUTPUT_TOKENS=32768
+TEMPERATURE=0.1
+```
 
 ---
 

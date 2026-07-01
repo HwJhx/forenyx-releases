@@ -124,6 +124,21 @@ rm -rf "$AGENT_DIR/skills/builtin"
 # Drop a stray plaintext skills/ dir if an older tarball shipped one.
 rm -rf "$BIN_DIR/skills"
 rm -rf "$LIBEXEC_DIR/skills"
+# Initialize Global Env Config
+GLOBAL_ENV_FILE="$FORENYX_DIR/.env"
+if [ ! -f "$GLOBAL_ENV_FILE" ]; then
+    echo -e "  - Initializing global user configuration file ~/.forenyx/.env..."
+    cat << 'EOF' > "$GLOBAL_ENV_FILE"
+# =============================================================================
+# Forenyx AI Global Configurations (.env)
+# =============================================================================
+OPENAI_API_KEY="YOUR-API-KEY"
+OPENAI_API_BASE="https://api.siliconflow.cn"
+ARK_MODEL_NAME='Qwen/Qwen3.5-397B-A17B'
+MAX_OUTPUT_TOKENS=32768
+TEMPERATURE=0.1
+EOF
+fi
 
 # 4. Generate Forenyx CLI Shell Wrapper
 echo -e "${BLUE}[4/5] Creating command wrapper...${NC}"
