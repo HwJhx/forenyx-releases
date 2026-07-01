@@ -147,7 +147,7 @@ case "$1" in
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
             CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
         else
-            CURRENT_VERSION="v0.2.7"
+            CURRENT_VERSION="unknown"
         fi
         
         RELEASES_REPO="HwJhx/forenyx-releases"
@@ -197,7 +197,7 @@ case "$1" in
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
             CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
         else
-            CURRENT_VERSION="v0.2.7"
+            CURRENT_VERSION="unknown"
         fi
         
         CUR_VER_CLEAN=$(echo "$CURRENT_VERSION" | tr -d 'v[:space:]')

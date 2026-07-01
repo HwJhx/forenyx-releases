@@ -1,4 +1,4 @@
 {
-  "version": "v0.2.7",
-  "note": "### Forenyx AI 0.2.7 feat:\n - [安全加固] \n - [体验优化] 优化 CLI 安装目录结构"
+  "version": "v0.2.8",
+  "note": "### Forenyx AI 0.2.8 feat:\n - [体验优化] CLI 升级与版本检测支持 2 秒非阻塞异步检测、翠绿加粗色彩高亮反馈，并支持 update 智能重复拦截，大幅提升操作交互体验"
 }
