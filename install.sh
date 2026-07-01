@@ -98,8 +98,8 @@ echo -e "  - Downloading version ${GREEN}$LATEST_VERSION${NC} from $DOWNLOAD_URL
 TMP_TARBALL="/tmp/$TARBALL_NAME"
 
 # Download with curl
-if ! curl -L --progress-bar "$DOWNLOAD_URL" -o "$TMP_TARBALL"; then
-    echo -e "${RED}Error: Download failed! Please check your network connection.${NC}"
+if ! curl -f -L --progress-bar "$DOWNLOAD_URL" -o "$TMP_TARBALL"; then
+    echo -e "${RED}Error: Download failed! Please check your network connection or verify the release asset is uploaded.${NC}"
     exit 1
 fi
 
@@ -109,9 +109,18 @@ rm -rf "$LIBEXEC_DIR"/*
 
 # Extract tarball.
 # The tarball contains a folder named "forenyx", inside which has all the files.
-tar -xzf "$TMP_TARBALL" -C /tmp/
+if ! tar -xzf "$TMP_TARBALL" -C /tmp/; then
+    echo -e "${RED}Error: Failed to extract installation archive.${NC}"
+    rm -f "$TMP_TARBALL"
+    exit 1
+fi
+
 # Move contents to ~/.forenyx/libexec/
-cp -rf /tmp/forenyx/* "$LIBEXEC_DIR/"
+if ! cp -rf /tmp/forenyx/* "$LIBEXEC_DIR/"; then
+    echo -e "${RED}Error: Failed to copy binaries to installation folder.${NC}"
+    rm -rf /tmp/forenyx "$TMP_TARBALL"
+    exit 1
+fi
 rm -rf /tmp/forenyx "$TMP_TARBALL"
 
 # Deploy Builtin Skills
@@ -243,24 +252,30 @@ case "$1" in
         
         echo -e "Downloading version \033[0;32m$LATEST_VERSION\033[0m..."
         TMP_TARBALL="/tmp/$TARBALL_NAME"
-        if ! curl -L --progress-bar "$DOWNLOAD_URL" -o "$TMP_TARBALL"; then
-            echo -e "\033[0;31mError: Download failed.\033[0m"
+        if ! curl -f -L --progress-bar "$DOWNLOAD_URL" -o "$TMP_TARBALL"; then
+            echo -e "\033[0;31mError: Download failed. The release asset may not be uploaded yet.\033[0m"
             exit 1
         fi
         
-        # Clean current libexec files
-        mkdir -p "$LIBEXEC_DIR/update_tmp"
-        tar -xzf "$TMP_TARBALL" -C "$LIBEXEC_DIR/update_tmp/"
+        if ! tar -xzf "$TMP_TARBALL" -C "$LIBEXEC_DIR/update_tmp/"; then
+            echo -e "\033[0;31mError: Failed to extract update archive.\033[0m"
+            rm -rf "$LIBEXEC_DIR/update_tmp" "$TMP_TARBALL"
+            exit 1
+        fi
         
         # Move everything from update_tmp/forenyx to libexec/
-        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/forenyx-cli" "$LIBEXEC_DIR/forenyx-cli" 2>/dev/null || true
-        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/package.json" "$LIBEXEC_DIR/package.json" 2>/dev/null || true
-        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/photon_rs_bg.wasm" "$LIBEXEC_DIR/photon_rs_bg.wasm" 2>/dev/null || true
-        cp -f "$LIBEXEC_DIR/update_tmp/forenyx/skills.pack" "$LIBEXEC_DIR/skills.pack" 2>/dev/null || true
-        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/node_modules" "$LIBEXEC_DIR/" 2>/dev/null || true
-        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/theme" "$LIBEXEC_DIR/" 2>/dev/null || true
-        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/assets" "$LIBEXEC_DIR/" 2>/dev/null || true
-        cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/export-html" "$LIBEXEC_DIR/" 2>/dev/null || true
+        if ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/forenyx-cli" "$LIBEXEC_DIR/forenyx-cli" || \
+           ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/package.json" "$LIBEXEC_DIR/package.json" || \
+           ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/photon_rs_bg.wasm" "$LIBEXEC_DIR/photon_rs_bg.wasm" || \
+           ! cp -f "$LIBEXEC_DIR/update_tmp/forenyx/skills.pack" "$LIBEXEC_DIR/skills.pack" || \
+           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/node_modules" "$LIBEXEC_DIR/" || \
+           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/theme" "$LIBEXEC_DIR/" || \
+           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/assets" "$LIBEXEC_DIR/" || \
+           ! cp -rf "$LIBEXEC_DIR/update_tmp/forenyx/export-html" "$LIBEXEC_DIR/"; then
+            echo -e "\033[0;31mError: Failed to deploy updated binaries and resources.\033[0m"
+            rm -rf "$LIBEXEC_DIR/update_tmp"
+            exit 1
+        fi
  
         # Refresh built-in skills (encrypted blob) and clean up any legacy plaintext.
         rm -rf "$AGENT_DIR/skills/builtin"
