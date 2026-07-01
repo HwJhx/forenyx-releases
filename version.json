@@ -1,4 +1,4 @@
 {
-  "version": "v0.2.6",
-  "note": "### Forenyx AI 0.2.6 feat:\n - 新增FSDB波形抽取Skill /uvm-fsdb-extract \n - 新增FSDB波形根因分析Skill: /uvm-testcase-wave-rca"
+  "version": "v0.2.7",
+  "note": "### Forenyx AI 0.2.7 feat:\n - [安全加固] \n - [体验优化] 优化 CLI 安装目录结构"
 }
