@@ -164,9 +164,9 @@ case "$1" in
             LAT_VER_CLEAN=$(echo "$LATEST_VERSION" | tr -d 'v[:space:]')
             
             if [ "$CUR_VER_CLEAN" = "$LAT_VER_CLEAN" ]; then
-                echo -e "\033[0;32m✓ You are already on the latest version.\033[0m"
+                echo -e "\033[1;92m✓ You are already on the latest version.\033[0m"
             else
-                echo -e "\033[0;33m⚠️ New version \033[1;32m$LATEST_VERSION\033[0;33m is available. Run \033[1;36mforenyx update\033[0;33m to upgrade.\033[0m"
+                echo -e "\033[0;33m⚠️ New version \033[1;92m$LATEST_VERSION\033[0;33m is available. Run \033[1;36mforenyx update\033[0;33m to upgrade.\033[0m"
             fi
         else
             echo -e "\033[0;90mNote: Failed to connect to the update server. Skipping update check.\033[0m"
@@ -204,7 +204,7 @@ case "$1" in
         LAT_VER_CLEAN=$(echo "$LATEST_VERSION" | tr -d 'v[:space:]')
         
         if [ "$CUR_VER_CLEAN" = "$LAT_VER_CLEAN" ]; then
-            echo -e "\033[0;32m✓ You are already on the latest version ($CURRENT_VERSION). No update required.\033[0m"
+            echo -e "\033[1;92m✓ You are already on the latest version ($CURRENT_VERSION). No update required.\033[0m"
             exit 0
         fi
         
