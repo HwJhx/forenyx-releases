@@ -141,7 +141,7 @@ if [ ! -f "$GLOBAL_ENV_FILE" ]; then
 # =============================================================================
 # Forenyx AI Global Configurations (.env)
 # =============================================================================
-OPENAI_API_KEY="YOUR-API-KEY"
+OPENAI_API_KEY=
 OPENAI_API_BASE="https://api.siliconflow.cn"
 ARK_MODEL_NAME='Qwen/Qwen3.5-397B-A17B'
 MAX_OUTPUT_TOKENS=32768
