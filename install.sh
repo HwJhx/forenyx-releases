@@ -126,7 +126,18 @@ echo -e "${BLUE}[3/5] Downloading pre-compiled binaries...${NC}"
 RELEASES_REPO="HwJhx/forenyx-releases"
 
 # License Verification
+if [ -z "$USER_LICENSE" ] && [ -f "$FORENYX_DIR/.env" ]; then
+    USER_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_DIR/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
+fi
+
 if [ -z "$USER_LICENSE" ]; then
+    if [ ! -t 0 ]; then
+        echo -e "${RED}❌ 错误: 本地未检测到已绑定的授权激活码（License Key）。${NC}"
+        echo -e "${YELLOW}ℹ 提示: 从 v0.3.0 升级到 v0.3.1 引入了全新的商业授权校验机制。${NC}"
+        echo -e "请在您的终端上手工重新运行以下命令以输入您的 License Key 进行首次激活绑定："
+        echo -e "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh | bash${NC}"
+        exit 1
+    fi
     echo -e "${YELLOW}💬 请输入您的 Forenyx AI 商业授权激活码 (License Key):${NC}"
     read -rp "> " USER_LICENSE
     USER_LICENSE=$(echo "$USER_LICENSE" | tr -d '[:space:]')
