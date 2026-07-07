@@ -10,7 +10,7 @@
 请在您的 Linux 或 macOS 终端中运行以下一键部署脚本：
 
 ```bash
-# 1. 运行安装脚本（将自动检测架构并下载编译好的独立二进制包）
+# 1. 运行安装脚本（系统将提示您输入专属商业授权激活码 License Key 完成一码一机绑定）
 curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash
 
 # 2. 刷新您当前终端的环境变量（根据您使用的 Shell 选择对应的刷新命令）
@@ -108,7 +108,8 @@ TEMPERATURE=0.1
 ```bash
 forenyx update
 ```
-更新脚本将自动检测 `version.json` 并下载对应的二进制包，执行覆盖升级。
+升级系统会自动读取本地 `.env` 中已绑定的 License 密钥，发起静默安全校验并执行一键覆盖升级。
+*(注：如果您是从不带 License 校验的历史极老版本（如 `v0.3.0`）升级，终端会抛出友好提示，引导您手动运行一次前台 `curl | bash` 安装命令以补充完成首次激活绑定。)*
 
 ### 客户端卸载 (Uninstall)
 若需卸载客户端并清理环境变量，直接在终端中执行：
