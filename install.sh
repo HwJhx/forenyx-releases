@@ -131,15 +131,15 @@ if [ -z "$USER_LICENSE" ] && [ -f "$FORENYX_DIR/.env" ]; then
 fi
 
 if [ -z "$USER_LICENSE" ]; then
-    if [ ! -t 0 ]; then
+    if [ ! -t 0 ] && [ ! -c /dev/tty ]; then
         echo -e "${RED}❌ 错误: 本地未检测到已绑定的授权激活码（License Key）。${NC}"
-        echo -e "${YELLOW}ℹ 提示: 从 v0.3.0 升级到 v0.3.1 引入了全新的商业授权校验机制。${NC}"
+        echo -e "${YELLOW}ℹ 提示: v0.3.1 引入了全新的商业授权校验机制。${NC}"
         echo -e "请在您的终端上手工重新运行以下命令以输入您的 License Key 进行首次激活绑定："
         echo -e "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh | bash${NC}"
         exit 1
     fi
     echo -e "${YELLOW}💬 请输入您的 Forenyx AI 商业授权激活码 (License Key):${NC}"
-    read -rp "> " USER_LICENSE
+    read -rp "> " USER_LICENSE < /dev/tty
     USER_LICENSE=$(echo "$USER_LICENSE" | tr -d '[:space:]')
 fi
 
