@@ -18,6 +18,57 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
+# Reset terminal colors on exit to prevent terminal color pollution
+trap 'echo -ne "${NC}"' EXIT
+
+get_machine_id() {
+    local machine_id=""
+    if [ "$(uname)" = "Darwin" ]; then
+        machine_id=$(ioreg -rd1 -c IOPlatformExpertDevice | awk '/IOPlatformUUID/ {print $4}' | tr -d '"' 2>/dev/null || echo "")
+        if [ -z "$machine_id" ]; then
+            machine_id=$(system_profiler SPHardwareDataType | awk '/UUID/ {print $3}' 2>/dev/null || echo "")
+        fi
+    else
+        if [ -f /etc/machine-id ]; then
+            machine_id=$(cat /etc/machine-id 2>/dev/null || echo "")
+        elif [ -f /var/lib/dbus/machine-id ]; then
+            machine_id=$(cat /var/lib/dbus/machine-id 2>/dev/null || echo "")
+        fi
+        if [ -z "$machine_id" ]; then
+            local mac_addr=$(cat /sys/class/net/*/address | grep -v '00:00:00:00:00:00' | head -n 1 2>/dev/null || echo "")
+            if [ -n "$mac_addr" ]; then
+                machine_id=$(echo "$mac_addr" | md5sum | awk '{print $1}' 2>/dev/null || echo "")
+            fi
+        fi
+    fi
+    
+    # 加上当前登录的 Linux 用户名，进行跨平台 MD5 联合哈希，精细化锁定到具体账户
+    local combined_raw="${machine_id}:${USER}"
+    local hashed_id=""
+    if command -v md5sum >/dev/null 2>&1; then
+        hashed_id=$(echo -n "$combined_raw" | md5sum | awk '{print $1}')
+    elif command -v md5 >/dev/null 2>&1; then
+        hashed_id=$(echo -n "$combined_raw" | md5)
+    else
+        hashed_id=$(echo -n "$combined_raw" | base64 | tr -d '=+/' | cut -c1-32)
+    fi
+    echo "$hashed_id" | tr -d '[:space:]'
+}
+
+USER_LICENSE=""
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --license)
+            USER_LICENSE="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 echo -e "${CYAN}${BOLD}=====================================================${NC}"
 echo -e "${CYAN}${BOLD}           Installing Forenyx AI (Forenyx)            ${NC}"
 echo -e "${CYAN}${BOLD}=====================================================${NC}"
@@ -73,28 +124,57 @@ echo -e "${BLUE}[3/5] Downloading pre-compiled binaries...${NC}"
 
 # Fetch version config to download the target release
 RELEASES_REPO="HwJhx/forenyx-releases"
-VERSION_URL="https://raw.githubusercontent.com/$RELEASES_REPO/main/version.json"
 
-echo -e "  - Retrieving latest version info..."
-VERSION_DATA=$(curl -fsSL "$VERSION_URL" || echo "")
+# License Verification
+if [ -z "$USER_LICENSE" ]; then
+    echo -e "${YELLOW}💬 请输入您的 Forenyx AI 商业授权激活码 (License Key):${NC}"
+    read -rp "> " USER_LICENSE
+    USER_LICENSE=$(echo "$USER_LICENSE" | tr -d '[:space:]')
+fi
 
-if [ -z "$VERSION_DATA" ]; then
-    echo -e "${RED}Error: Failed to fetch version info from $VERSION_URL${NC}"
+if [ -z "$USER_LICENSE" ]; then
+    echo -e "${RED}❌ 错误: 授权激活码不能为空！${NC}"
     exit 1
 fi
 
-# Simple JSON parser in shell
-LATEST_VERSION=$(echo "$VERSION_DATA" | grep '"version"' | head -n 1 | cut -d'"' -f4)
+LICENSE_SERVER="https://dsvtcqycopcyzuzkgikv.supabase.co/functions/v1/verify"
+echo -e "  - 正在向授权服务器验证激活码，请稍候..."
 
-if [ -z "$LATEST_VERSION" ]; then
-    echo -e "${RED}Error: Could not parse version from version.json${NC}"
+CLIENT_ID=$(get_machine_id)
+if [ -z "$CLIENT_ID" ]; then
+    CLIENT_ID="unknown-client"
+fi
+
+RESPONSE=$(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"license_number\":\"$USER_LICENSE\",\"platform\":\"$PLATFORM\",\"client_id\":\"$CLIENT_ID\",\"user_name\":\"$USER\"}" \
+  "$LICENSE_SERVER" || echo "")
+
+DOWNLOAD_URL=""
+ERR_MSG=""
+
+if [ -z "$RESPONSE" ]; then
+    ERR_MSG="未收到授权服务器响应，请检查网络连接。"
+else
+    if command -v python3 >/dev/null 2>&1; then
+        DOWNLOAD_URL=$(echo "$RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('download_url', ''))" 2>/dev/null || echo "")
+        ERR_MSG=$(echo "$RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('error', ''))" 2>/dev/null || echo "")
+    else
+        DOWNLOAD_URL=$(echo "$RESPONSE" | grep -o '"download_url":"[^"]*' | cut -d'"' -f4 || echo "")
+        ERR_MSG=$(echo "$RESPONSE" | grep -o '"error":"[^"]*' | cut -d'"' -f4 || echo "")
+    fi
+fi
+
+if [ -n "$ERR_MSG" ] || [ -z "$DOWNLOAD_URL" ]; then
+    [ -z "$ERR_MSG" ] && ERR_MSG="校验失败，无法签发下载链接。请联系管理员。"
+    echo -e "${RED}❌ 激活失败: $ERR_MSG${NC}"
     exit 1
 fi
+
+echo -e "  - ${GREEN}✓ 授权码验证成功！已换取专用下载链接。${NC}"
 
 TARBALL_NAME="forenyx-$PLATFORM.tar.gz"
-DOWNLOAD_URL="https://github.com/$RELEASES_REPO/releases/download/$LATEST_VERSION/$TARBALL_NAME"
-
-echo -e "  - Downloading version ${GREEN}$LATEST_VERSION${NC} from $DOWNLOAD_URL..."
+echo -e "  - Downloading binaries from $DOWNLOAD_URL..."
 TMP_TARBALL="/tmp/$TARBALL_NAME"
 
 # Download with curl
@@ -137,16 +217,27 @@ rm -rf "$LIBEXEC_DIR/skills"
 GLOBAL_ENV_FILE="$FORENYX_DIR/.env"
 if [ ! -f "$GLOBAL_ENV_FILE" ]; then
     echo -e "  - Initializing global user configuration file ~/.forenyx/.env..."
-    cat << 'EOF' > "$GLOBAL_ENV_FILE"
+    cat << EOF > "$GLOBAL_ENV_FILE"
 # =============================================================================
 # Forenyx AI Global Configurations (.env)
 # =============================================================================
+FORENYX_LICENSE_KEY=$USER_LICENSE
+FORENYX_CLIENT_ID=$CLIENT_ID
 OPENAI_API_KEY=
 OPENAI_API_BASE="https://api.siliconflow.cn"
 ARK_MODEL_NAME='Qwen/Qwen3.5-397B-A17B'
 MAX_OUTPUT_TOKENS=32768
 TEMPERATURE=0.1
 EOF
+else
+    # Append or update missing configuration placeholders if updating from older versions
+    if ! grep -q "^FORENYX_LICENSE_KEY=" "$GLOBAL_ENV_FILE"; then
+        echo -e "  - Saving license key to ~/.forenyx/.env..."
+        echo "FORENYX_LICENSE_KEY=$USER_LICENSE" >> "$GLOBAL_ENV_FILE"
+    fi
+    if ! grep -q "^FORENYX_CLIENT_ID=" "$GLOBAL_ENV_FILE"; then
+        echo "FORENYX_CLIENT_ID=$CLIENT_ID" >> "$GLOBAL_ENV_FILE"
+    fi
 fi
 
 # 4. Generate Forenyx CLI Shell Wrapper
@@ -234,7 +325,14 @@ case "$1" in
         
         # Divergence detected: fetch and execute the latest install script to achieve a full self-update securely.
         echo -e "New version \033[1;32m$LATEST_VERSION\033[0m is available. Pulling the installer..."
-        if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash; then
+        
+        # Load local license key if exists to perform silent upgrade
+        LOCAL_LICENSE=""
+        if [ -f "$FORENYX_DIR/.env" ]; then
+            LOCAL_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_DIR/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
+        fi
+
+        if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash -s -- --license "$LOCAL_LICENSE"; then
             echo -e "\033[0;31mError: Update failed during execution of the remote install script.\033[0m"
             exit 1
         fi
