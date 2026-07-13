@@ -1,4 +1,4 @@
 {
-  "version": "v0.3.3",
-  "note": "### Forenyx AI 0.3.3 \n - 优化 UVM 搭建 Skill 约束"
+  "version": "v0.3.4",
+  "note": "### Forenyx AI 0.3.4 \n - 交互命令行拦截优化 \n - 环境搭建技能规范修正"
 }

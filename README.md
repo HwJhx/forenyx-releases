@@ -3,11 +3,16 @@
 > **芯片验证工程师专属的闭源智能编码 Agent 终端。**
 > 免源码、零依赖，支持快速部署。
 
+> [!IMPORTANT]
+> **系统与工具链兼容性说明**：
+> * **操作系统**：目前仅支持 **Linux** 系统（如 RedHat/CentOS/Ubuntu 等 64 位发行版），暂不支持 macOS / Windows。
+> * **仿真工具**：UVM 编译与仿真环境目前仅支持 **VCS (Synopsys)**，暂不支持 ModelSim/Questa/Xcelium 等其他仿真器。
+
 ---
 
-## 快速安装与启动 (Linux & macOS)
+## 快速安装与启动 (仅限 Linux)
 
-请在您的 Linux 或 macOS 终端中运行以下一键部署脚本：
+请在您的 Linux 终端中运行以下一键部署脚本：
 
 ```bash
 # 1. 运行安装脚本（系统将提示您输入专属商业授权激活码 License Key 完成一码一机绑定）
