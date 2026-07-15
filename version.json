@@ -1,4 +1,4 @@
 {
   "version": "v0.3.5",
-  "note": "### Forenyx AI 0.3.5 \n - 修复了 CLI 假死问题：/uvm-testcase-auto执行后，后续输入全部积压没有处理响应\n -  修复了用例误报'生成失败'的问题：register_tc.py 硬性要求 tbench.v 里有 include 标记"
+  "note": "### Forenyx AI 0.3.5 \n - 修复了 CLI 假死问题：/uvm-testcase-auto执行后，后续输入全部积压没有处理响应\n -  修复了用例误报'生成失败'的问题：register_tc.py 硬性要求 tbench.v 里有 include 标记\n -修复了执行技能时报 .py 脚本找不到（在工作目录下误寻 scripts/）的问题"
 }
