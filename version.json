@@ -1,4 +1,4 @@
 {
-  "version": "v0.3.5",
-  "note": "### Forenyx AI 0.3.5 \n - 修复了 CLI 假死问题：/uvm-testcase-auto执行后，后续输入全部积压没有处理响应\n -  修复了用例误报'生成失败'的问题：register_tc.py 硬性要求 tbench.v 里有 include 标记\n -修复了执行技能时报 .py 脚本找不到（在工作目录下误寻 scripts/）的问题"
+  "version": "v0.3.6",
+  "note": "### Forenyx AI 0.3.6 \n - [新功能] 新增 uvm-env-sva Skill：从 testplan 的「DUT 级 SVA 不变式清单」自动生成 SVA checker 模块、非侵入 bind 与 sva_index.md 索引，支持信号发现脚本（discover_signals.py）与 fail-closed 降级\n - [增强] uvm-testplan-gen-testplan：检查点新增 [SVA-off] 标签（负向/异常用例关断断言），与 [SVA-cover]（正向覆盖）区分；输出模板同步更新\n - [增强] uvm-testcase-gen-testcase：新增 2c 步「SVA 状态探测与四格决策矩阵」，vseq 强制 SVA 决策记录与 $assertoff/$asserton 成对平衡校验；步骤重编号 2a~2h 并全量同步交叉引用\n - [增强] uvm-env-sva 双向交叉校验：[SVA-cover] 与 [SVA-off] 引用的不变式 ID 须在清单中存在；清单→引用覆盖检查仅算 [SVA-cover]\n - [增强] uvm-env-impl：补充 SVA 阶段衔接说明"
 }
