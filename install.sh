@@ -156,16 +156,70 @@ if [ -z "$CLIENT_ID" ]; then
     CLIENT_ID="unknown-client"
 fi
 
-RESPONSE=$(curl -s -X POST \
-  -H "Content-Type: application/json" \
-  -d "{\"license_number\":\"$USER_LICENSE\",\"platform\":\"$PLATFORM\",\"client_id\":\"$CLIENT_ID\",\"user_name\":\"$USER\"}" \
-  "$LICENSE_SERVER" || echo "")
+# 授权服务跑在 Supabase 上，项目从休眠中唤醒需要约 1-2 分钟，期间网关会返回
+# 503/504，数据库尚未就绪时 Edge Function 自身也会返回 500。这类都是临时故障，
+# 自动退避重试即可，不该让用户看到崩溃或"请联系管理员"。
+# 而 400/403 是真实的授权错误（激活码无效、设备指纹不符等），必须立即失败、不重试。
+request_license_server() {
+    local attempt=1
+    local max_attempts=4
+    local delay=15
+
+    while :; do
+        HTTP_CODE=$(curl -s -o "$RESP_BODY_FILE" -w "%{http_code}" \
+          --max-time 30 \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"license_number\":\"$USER_LICENSE\",\"platform\":\"$PLATFORM\",\"client_id\":\"$CLIENT_ID\",\"user_name\":\"$USER\"}" \
+          "$LICENSE_SERVER" 2>/dev/null) || HTTP_CODE="000"
+
+        case "$HTTP_CODE" in
+            000|408|429|500|502|503|504)
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                    return 1
+                fi
+                if [ "$attempt" -eq 1 ]; then
+                    echo -e "${YELLOW}⏳ 授权服务正在唤醒中，${delay} 秒后自动重试... (${attempt}/${max_attempts})${NC}"
+                else
+                    echo -e "${YELLOW}⏳ 仍未就绪，${delay} 秒后重试... (${attempt}/${max_attempts})${NC}"
+                fi
+                sleep "$delay"
+                attempt=$((attempt + 1))
+                delay=$((delay * 2))
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    done
+}
+
+RESP_BODY_FILE=$(mktemp "${TMPDIR:-/tmp}/forenyx-license.XXXXXX")
+HTTP_CODE="000"
+
+if ! request_license_server; then
+    rm -f "$RESP_BODY_FILE"
+    echo ""
+    if [ "$HTTP_CODE" = "000" ]; then
+        echo -e "${RED}❌ 无法连接授权服务器。${NC}"
+        echo -e "${YELLOW}ℹ 可能原因: 本地网络不通、DNS 解析失败或被代理拦截。${NC}"
+        echo -e "  请检查网络后重新执行安装/更新命令。"
+    else
+        echo -e "${RED}❌ 授权服务暂时不可用（HTTP ${HTTP_CODE}）。${NC}"
+        echo -e "${YELLOW}ℹ 这通常是服务正在唤醒，一般 1-2 分钟内自动恢复。${NC}"
+        echo -e "  请稍候片刻后重新执行安装/更新命令即可，无需任何额外操作。"
+    fi
+    exit 1
+fi
+
+RESPONSE=$(cat "$RESP_BODY_FILE" 2>/dev/null || echo "")
+rm -f "$RESP_BODY_FILE"
 
 DOWNLOAD_URL=""
 ERR_MSG=""
 
 if [ -z "$RESPONSE" ]; then
-    ERR_MSG="未收到授权服务器响应，请检查网络连接。"
+    ERR_MSG="授权服务器返回了空响应（HTTP ${HTTP_CODE}），请稍后重试。"
 else
     if command -v python3 >/dev/null 2>&1; then
         DOWNLOAD_URL=$(echo "$RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('download_url', ''))" 2>/dev/null || echo "")
@@ -177,7 +231,7 @@ else
 fi
 
 if [ -n "$ERR_MSG" ] || [ -z "$DOWNLOAD_URL" ]; then
-    [ -z "$ERR_MSG" ] && ERR_MSG="校验失败，无法签发下载链接。请联系管理员。"
+    [ -z "$ERR_MSG" ] && ERR_MSG="校验失败，无法签发下载链接（HTTP ${HTTP_CODE}）。请联系管理员。"
     echo -e "${RED}❌ 激活失败: $ERR_MSG${NC}"
     exit 1
 fi
