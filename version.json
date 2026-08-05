@@ -1,4 +1,4 @@
 {
-  "version": "v0.3.7",
-  "note": "### Forenyx AI 0.3.7 \n - Testplan skill 新增spec目录必填参数，chisel路径降级为可选"
+  "version": "v0.3.8",
+  "note": "### Forenyx AI 0.3.8 \n - 支持License过期验证功能"
 }
