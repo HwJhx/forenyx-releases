@@ -217,6 +217,7 @@ rm -f "$RESP_BODY_FILE"
 
 DOWNLOAD_URL=""
 ERR_MSG=""
+EXPIRE_DISPLAY=""
 
 if [ -z "$RESPONSE" ]; then
     ERR_MSG="授权服务器返回了空响应（HTTP ${HTTP_CODE}），请稍后重试。"
@@ -224,9 +225,11 @@ else
     if command -v python3 >/dev/null 2>&1; then
         DOWNLOAD_URL=$(echo "$RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('download_url', ''))" 2>/dev/null || echo "")
         ERR_MSG=$(echo "$RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('error', ''))" 2>/dev/null || echo "")
+        EXPIRE_DISPLAY=$(echo "$RESPONSE" | python3 -c "import sys, json; print(json.load(sys.stdin).get('expires_at', ''))" 2>/dev/null || echo "")
     else
         DOWNLOAD_URL=$(echo "$RESPONSE" | grep -o '"download_url":"[^"]*' | cut -d'"' -f4 || echo "")
         ERR_MSG=$(echo "$RESPONSE" | grep -o '"error":"[^"]*' | cut -d'"' -f4 || echo "")
+        EXPIRE_DISPLAY=$(echo "$RESPONSE" | grep -o '"expires_at":"[^"]*' | cut -d'"' -f4 || echo "")
     fi
 fi
 
@@ -236,7 +239,12 @@ if [ -n "$ERR_MSG" ] || [ -z "$DOWNLOAD_URL" ]; then
     exit 1
 fi
 
-echo -e "  - ${GREEN}✓ 授权码验证成功！已换取专用下载链接。${NC}"
+# 有效期信息拼进同一行，避免与下方提示重复成两行
+if [ -n "$EXPIRE_DISPLAY" ]; then
+    echo -e "  - ${GREEN}✓ 授权码验证成功！已换取专用下载链接。（有效期至：${EXPIRE_DISPLAY}）${NC}"
+else
+    echo -e "  - ${GREEN}✓ 授权码验证成功！已换取专用下载链接。${NC}"
+fi
 
 TARBALL_NAME="forenyx-$PLATFORM.tar.gz"
 echo -e "  - Downloading binaries from $DOWNLOAD_URL..."
@@ -333,7 +341,7 @@ case "$1" in
         RELEASES_REPO="HwJhx/forenyx-releases"
         VERSION_URL="https://raw.githubusercontent.com/$RELEASES_REPO/main/version.json"
         
-        echo -e "forenyx $CURRENT_VERSION (based on pi v0.79.10)"
+        echo -e "ForeNyx CLI $CURRENT_VERSION"
         
         # Check remote version with a tight 2s connect timeout so offline systems don't block
         VERSION_DATA=$(curl -fsSL --connect-timeout 2 --max-time 3 "$VERSION_URL" 2>/dev/null || echo "")

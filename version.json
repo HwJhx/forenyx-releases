@@ -1,4 +1,4 @@
 {
   "version": "v0.3.9",
-  "note": "### Forenyx AI 0.3.9 \n - CLI启动时不显示底层框架相关信息"
+  "note": "### Forenyx AI 0.3.9 \n - CLI不显示底层框架相关信息"
 }
