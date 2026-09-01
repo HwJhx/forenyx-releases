@@ -1,4 +1,4 @@
 {
-  "version": "v0.4.0",
-  "note": "### Forenyx AI 0.4.0 \n - 测试版(license)"
+  "version": "v0.4.1",
+  "note": "### Forenyx AI 0.4.1 \n - bugfix:编译失败自动修复流程失效\n - bugfix:testplan 解析输出把噪声当分组"
 }
