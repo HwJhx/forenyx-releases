@@ -1,4 +1,4 @@
 {
-  "version": "v0.4.1",
-  "note": "### Forenyx AI 0.4.1 \n - bugfix:编译失败自动修复流程失效\n - bugfix:testplan 解析输出把噪声当分组"
+  "version": "v0.4.2",
+  "note": "### Forenyx AI 0.4.2 \n - 修改名称为fnx_dv"
 }

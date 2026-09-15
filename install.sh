@@ -147,11 +147,62 @@ echo -e "  - Platform: ${GREEN}$PLATFORM${NC}"
 
 # 2. Directory Setup
 echo -e "${BLUE}[2/5] Setting up directories...${NC}"
-FORENYX_DIR="$HOME/.forenyx"
+# 目录分两层。
+#
+# `~/.forenyx/` 是**机器级**的：授权文件、心跳缓存、client_id 都放这里，规划中的
+# 五个智能体（fnx_spec / fnx_arch / fnx_rtl / fnx_dv / fnx_sw）共用同一张授权、
+# 同一次心跳。这不只是省事——每个智能体各自心跳的话，服务端会把一台机器看成
+# 五个客户端，席位审计和吊销判定都会错。
+#
+# 而且这几个路径在 license-guard.ts 里是写死的（`join(homedir(), ".forenyx")`，
+# 没有环境变量开关），搬下去授权直接失效。
+#
+# `~/.forenyx/<智能体名>/` 才是单个智能体自己的：程序本体、wrapper、用户数据。
+# 派生新智能体只需要改 AGENT_NAME 一处。
+# 本仓库构建的智能体。**必须与 packages/coding-agent/package.json 的
+# piConfig.agentName 一致** —— 那是二进制自带的身份，横幅与 --version 从它来；
+# 这里的值定目录名、命令名与 PATH。安装脚本在下载解包之前就要用它定目录，
+# 没法反过来从 package.json 读，所以两处都写、装完再校验（见第 4 步之后）。
+AGENT_NAME="fnx_dv"
+FORENYX_ROOT="$HOME/.forenyx"
+FORENYX_DIR="$FORENYX_ROOT/$AGENT_NAME"
 BIN_DIR="$FORENYX_DIR/bin"
 LIBEXEC_DIR="$FORENYX_DIR/libexec"
 AGENT_DIR="$FORENYX_DIR/agent"
 
+# ---------------------------------------------------------------------------
+# 旧版布局拦截
+#
+# v0.4.1 及更早把单个智能体直接摊在 ~/.forenyx 下（bin/ libexec/ agent/）。
+# 新版每个智能体一个子目录，两者并存会出事而且**不会报错**：
+#   · 老的 forenyx 命令原地不动，版本永远停在旧值 → 每次 update 都说"有新版本"
+#     并重装一遍，无限循环；
+#   · 用户的 auth.json / sessions 留在老 agent/ 里，新智能体读不到，要重新登录；
+#   · .bashrc 里两条 PATH 并存。
+#
+# 所以宁可停下来让人处理，也不要装出这么一摊。这不是临时迁移垫片——以后任何
+# 版本装到老布局上都该拦。
+# ---------------------------------------------------------------------------
+if [ -d "$FORENYX_ROOT/libexec" ] && [ ! -d "$FORENYX_DIR/libexec" ]; then
+    echo -e "${RED}❌ 检测到旧版目录布局：$FORENYX_ROOT/libexec${NC}"
+    echo -e "${YELLOW}   新版把每个智能体装进 ~/.forenyx/<智能体名>/，与旧布局不能并存。${NC}"
+    echo
+    echo -e "   请先清理旧版："
+    echo -e "     ${CYAN}forenyx uninstall${NC}       （选择不保留数据，或按下面手工清）"
+    echo -e "   手工清理："
+    echo -e "     ${CYAN}rm -rf ~/.forenyx/bin ~/.forenyx/libexec${NC}"
+    echo -e "     然后删掉 ~/.bashrc（或 .zshrc）里这一行："
+    echo -e "     ${CYAN}export PATH=\"\$HOME/.forenyx/bin:\$PATH\"${NC}"
+    echo
+    echo -e "${YELLOW}   旧版的用户数据在 ~/.forenyx/agent/，新版不会自动搬。${NC}"
+    echo -e "   需要保留 API key 与会话历史的话，清理完再执行一次本脚本，装好后："
+    echo -e "     ${CYAN}cp -r ~/.forenyx/agent/. ~/.forenyx/$AGENT_NAME/agent/${NC}"
+    echo
+    echo -e "${YELLOW}   授权文件 ~/.forenyx/forenyx.lic 与 .env 不用动，新版仍然用它们。${NC}"
+    exit 1
+fi
+
+mkdir -p "$FORENYX_ROOT"
 mkdir -p "$FORENYX_DIR"
 mkdir -p "$BIN_DIR"
 mkdir -p "$LIBEXEC_DIR"
@@ -248,7 +299,7 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     # 删掉的话客户就没法重装或回滚了。
     rm -rf /tmp/forenyx
 
-    # fd / ripgrep 装到 CLI 查找工具的第一顺位目录（getBinDir() = ~/.forenyx/agent/bin）。
+    # fd / ripgrep 装到 CLI 查找工具的第一顺位目录（getBinDir() = $AGENT_DIR/bin）。
     # 缺了它们不是功能降级 —— find 和 grep 两个工具会直接报错，agent 基本不可用。
     # 在线安装时 CLI 自己从 GitHub 下载，离线只能随包带。
     TOOLS_SRC="$BUNDLE_DIR/tools/$PLATFORM"
@@ -273,8 +324,8 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     # 客户端在缺少授权文件时会提示"运行安装目录下的 forenyx-hostid.sh"，
     # 所以它必须真的在那儿。离线包里带了一份，装进去即可。
     if [ -f "$BUNDLE_DIR/forenyx-hostid.sh" ]; then
-        cp -f "$BUNDLE_DIR/forenyx-hostid.sh" "$FORENYX_DIR/forenyx-hostid.sh"
-        chmod +x "$FORENYX_DIR/forenyx-hostid.sh"
+        cp -f "$BUNDLE_DIR/forenyx-hostid.sh" "$FORENYX_ROOT/forenyx-hostid.sh"
+        chmod +x "$FORENYX_ROOT/forenyx-hostid.sh"
     fi
 
     # ---- 授权文件 ----
@@ -285,17 +336,17 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     # 不校验签名 —— 私钥在服务端，安装脚本手里只有公钥能做的事，
     # 而验签本来就是客户端启动时要做的。这里只保证文件确实落到位。
     if [ -f "$BUNDLE_DIR/forenyx.lic" ]; then
-        if cp -f "$BUNDLE_DIR/forenyx.lic" "$FORENYX_DIR/forenyx.lic.tmp" \
-           && chmod 600 "$FORENYX_DIR/forenyx.lic.tmp" \
-           && mv -f "$FORENYX_DIR/forenyx.lic.tmp" "$FORENYX_DIR/forenyx.lic"; then
-            echo -e "  - ${GREEN}✓ 已安装授权文件 $FORENYX_DIR/forenyx.lic${NC}"
+        if cp -f "$BUNDLE_DIR/forenyx.lic" "$FORENYX_ROOT/forenyx.lic.tmp" \
+           && chmod 600 "$FORENYX_ROOT/forenyx.lic.tmp" \
+           && mv -f "$FORENYX_ROOT/forenyx.lic.tmp" "$FORENYX_ROOT/forenyx.lic"; then
+            echo -e "  - ${GREEN}✓ 已安装授权文件 $FORENYX_ROOT/forenyx.lic${NC}"
         else
-            rm -f "$FORENYX_DIR/forenyx.lic.tmp"
-            echo -e "${RED}❌ 授权文件写入失败: $FORENYX_DIR/forenyx.lic${NC}"
+            rm -f "$FORENYX_ROOT/forenyx.lic.tmp"
+            echo -e "${RED}❌ 授权文件写入失败: $FORENYX_ROOT/forenyx.lic${NC}"
             echo -e "${YELLOW}   请检查磁盘空间与目录权限后重装。离线机器缺少该文件将无法启动。${NC}"
             exit 1
         fi
-    elif [ -f "$FORENYX_DIR/forenyx.lic" ]; then
+    elif [ -f "$FORENYX_ROOT/forenyx.lic" ]; then
         # 重装/升级场景：包里没带，但机器上已经有一份（上次安装或心跳留下的）。
         # 保留它，别把能用的机器装成不能用的。
         echo -e "  - ${CYAN}ℹ 离线包未附带授权文件，沿用本机已有的 forenyx.lic${NC}"
@@ -303,13 +354,13 @@ if [ "$OFFLINE_MODE" = "1" ]; then
         echo -e "${YELLOW}⚠ 离线包内没有授权文件（forenyx.lic），本机也没有。${NC}"
         echo -e "${YELLOW}   安装可以完成，但 forenyx 启动时会因缺少授权而退出。${NC}"
         echo -e "${YELLOW}   请把安装目录下 forenyx-hostid.sh 的输出发给管理员换取授权文件，${NC}"
-        echo -e "${YELLOW}   拿到后放到 $FORENYX_DIR/forenyx.lic（权限 600）即可。${NC}"
+        echo -e "${YELLOW}   拿到后放到 $FORENYX_ROOT/forenyx.lic（权限 600）即可。${NC}"
     fi
 else
 
 # License Verification
-if [ -z "$USER_LICENSE" ] && [ -f "$FORENYX_DIR/.env" ]; then
-    USER_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_DIR/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
+if [ -z "$USER_LICENSE" ] && [ -f "$FORENYX_ROOT/.env" ]; then
+    USER_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_ROOT/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
 fi
 
 if [ -z "$USER_LICENSE" ]; then
@@ -483,7 +534,7 @@ if ! tar -xzf "$TMP_TARBALL" -C /tmp/; then
     exit 1
 fi
 
-# Move contents to ~/.forenyx/libexec/
+# Move contents to $LIBEXEC_DIR/
 if ! cp -rf /tmp/forenyx/* "$LIBEXEC_DIR/"; then
     echo -e "${RED}Error: Failed to copy binaries to installation folder.${NC}"
     rm -rf /tmp/forenyx "$TMP_TARBALL"
@@ -496,7 +547,7 @@ fi  # end of online/offline branch
 # Deploy Builtin Skills
 # Built-in skills ship as an encrypted blob (skills.pack) that stays alongside the
 # binary in $LIBEXEC_DIR; the CLI decrypts it to a temp dir at runtime. We no longer
-# extract browsable plaintext skills into ~/.forenyx/agent/skills/builtin.
+# extract browsable plaintext skills into $AGENT_DIR/skills/builtin.
 echo -e "  - Installing encrypted built-in skills..."
 # Remove any legacy plaintext built-in skills from previous versions.
 rm -rf "$AGENT_DIR/skills/builtin"
@@ -504,7 +555,7 @@ rm -rf "$AGENT_DIR/skills/builtin"
 rm -rf "$BIN_DIR/skills"
 rm -rf "$LIBEXEC_DIR/skills"
 # Initialize Global Env Config
-GLOBAL_ENV_FILE="$FORENYX_DIR/.env"
+GLOBAL_ENV_FILE="$FORENYX_ROOT/.env"
 if [ ! -f "$GLOBAL_ENV_FILE" ]; then
     echo -e "  - Initializing global user configuration file ~/.forenyx/.env..."
     cat << EOF > "$GLOBAL_ENV_FILE"
@@ -515,7 +566,7 @@ FORENYX_LICENSE_KEY=$USER_LICENSE
 FORENYX_CLIENT_ID=$CLIENT_ID
 OPENAI_API_KEY=
 OPENAI_API_BASE="https://api.siliconflow.cn"
-ARK_MODEL_NAME='Qwen/Qwen3.5-397B-A17B'
+ARK_MODEL_NAME='Qwen/Qwen3.8-27B'
 MAX_OUTPUT_TOKENS=32768
 TEMPERATURE=0.1
 EOF
@@ -561,25 +612,71 @@ else
     rm -f "$GLOBAL_ENV_FILE.bak"
 fi
 
+# 校验：安装脚本写的 AGENT_NAME 与二进制自带的 piConfig.agentName 必须一致。
+# 不一致的话，目录和命令叫 A、横幅和 --version 叫 B，排查时会非常费解。
+BUILT_AGENT=$(sed -n '/"piConfig"[[:space:]]*:/,/}/p' "$LIBEXEC_DIR/package.json" 2>/dev/null \
+    | grep '"agentName"[[:space:]]*:' | head -1 | cut -d'"' -f4)
+if [ -n "$BUILT_AGENT" ] && [ "$BUILT_AGENT" != "$AGENT_NAME" ]; then
+    echo -e "${RED}❌ 智能体名不一致：安装脚本写的是 '$AGENT_NAME'，"
+    echo -e "   而下载到的二进制自带的是 '$BUILT_AGENT'。${NC}"
+    echo -e "${YELLOW}   多半是装错了发布仓库，或两个仓库的版本没对齐。已中止，未改动 PATH。${NC}"
+    exit 1
+fi
+
 # 4. Generate Forenyx CLI Shell Wrapper
 echo -e "${BLUE}[4/5] Creating command wrapper...${NC}"
-WRAPPER_FILE="$BIN_DIR/forenyx"
+# 命令名与目录名同名（fnx_dv）。五个智能体各有自己的 bin/，若都叫 forenyx
+# 就会在 PATH 里互相遮蔽——谁先在 PATH 里谁赢，而且看不出赢的是哪个。
+WRAPPER_FILE="$BIN_DIR/$AGENT_NAME"
 
-cat << 'EOF' > "$WRAPPER_FILE"
+# 头几行要展开 $AGENT_NAME，故用未加引号的 heredoc；其余部分保持 'EOF'
+# 引用，避免 wrapper 自己的变量在生成时就被求值。
+cat << EOF > "$WRAPPER_FILE"
 #!/bin/bash
 
 # =============================================================================
-# Forenyx AI Wrapper
+# Forenyx AI Wrapper — 智能体 $AGENT_NAME
 # =============================================================================
 
-FORENYX_DIR="$HOME/.forenyx"
+AGENT_NAME="$AGENT_NAME"
+EOF
+
+cat << 'EOF' >> "$WRAPPER_FILE"
+# 机器级：授权文件与心跳缓存，所有智能体共用。license-guard.ts 里写死了这个
+# 位置，不要改。
+FORENYX_ROOT="$HOME/.forenyx"
+# 本智能体自己的根
+FORENYX_DIR="$FORENYX_ROOT/$AGENT_NAME"
 BIN_DIR="$FORENYX_DIR/bin"
 LIBEXEC_DIR="$FORENYX_DIR/libexec"
 AGENT_DIR="$FORENYX_DIR/agent"
 
+# 用户数据目录交给 CLI。不设这个变量的话 getAgentDir() 会退回写死的
+# ~/.forenyx/agent，五个智能体的会话与设置就全挤在同一个目录里。
+export FORENYX_CODING_AGENT_DIR="$AGENT_DIR"
+# 启动横幅与 --version 要标出当前是哪个智能体。几个智能体共用同一套引擎、
+# 版本号往往一样，只打产品名的话同时开两个终端分不出自己在哪个里面。
+export FORENYX_AGENT_NAME="$AGENT_NAME"
+
+# 从 libexec/package.json 的 piConfig 块里取一个字段。
+#
+# 原先用 `grep -A 3 '"piConfig"'` 取版本号——那是按"piConfig 正好 3 个字段"写死的，
+# 往里加一个字段就可能把 version 挤出窗口，而且不会报错，只会安静地取到空值。
+# 改成按 piConfig 的 { … } 范围取，字段数和顺序都不再相关。
+piconfig_field() {
+    [ -f "$LIBEXEC_DIR/package.json" ] || return 0
+    sed -n '/"piConfig"[[:space:]]*:/,/}/p' "$LIBEXEC_DIR/package.json" \
+        | grep "\"$1\"[[:space:]]*:" | head -1 | cut -d'"' -f4
+}
+
+# 产品展示名。唯一真源是 package.json 的 piConfig.displayName（CLI 侧读的也是它），
+# 取不到才回退——别在这里写死，否则改名时这里会和横幅对不上。
+APP_DISPLAY_NAME="$(piconfig_field displayName)"
+APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-ForeNyx CLI}"
+
 # 离线部署标记。由安装脚本 --offline 写入 .env，用于跳过所有联网检查。
 IS_OFFLINE=0
-if [ -f "$FORENYX_DIR/.env" ] && grep -q "^FORENYX_OFFLINE=1" "$FORENYX_DIR/.env" 2>/dev/null; then
+if [ -f "$FORENYX_ROOT/.env" ] && grep -q "^FORENYX_OFFLINE=1" "$FORENYX_ROOT/.env" 2>/dev/null; then
     IS_OFFLINE=1
 fi
 
@@ -587,7 +684,7 @@ fi
 case "$1" in
     --version|-v)
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
-            CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
+            CURRENT_VERSION=$(piconfig_field version)
         else
             CURRENT_VERSION="unknown"
         fi
@@ -595,7 +692,7 @@ case "$1" in
         RELEASES_REPO="HwJhx/forenyx-releases"
         VERSION_URL="https://raw.githubusercontent.com/$RELEASES_REPO/main/version.json"
 
-        echo -e "ForeNyx CLI $CURRENT_VERSION"
+        echo -e "$APP_DISPLAY_NAME · $AGENT_NAME $CURRENT_VERSION"
 
         if [ "$IS_OFFLINE" = "1" ]; then
             echo -e "\033[0;90m离线部署，跳过版本检查。\033[0m"
@@ -649,7 +746,7 @@ case "$1" in
         
         # Check current version and skip if it's already the latest
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
-            CURRENT_VERSION=$(grep -A 3 '"piConfig"' "$LIBEXEC_DIR/package.json" | grep '"version"' | cut -d'"' -f4)
+            CURRENT_VERSION=$(piconfig_field version)
         else
             CURRENT_VERSION="unknown"
         fi
@@ -667,8 +764,8 @@ case "$1" in
         
         # Load local license key if exists to perform silent upgrade
         LOCAL_LICENSE=""
-        if [ -f "$FORENYX_DIR/.env" ]; then
-            LOCAL_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_DIR/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
+        if [ -f "$FORENYX_ROOT/.env" ]; then
+            LOCAL_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_ROOT/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
         fi
 
         if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash -s -- --license "$LOCAL_LICENSE"; then
@@ -682,9 +779,10 @@ case "$1" in
         echo -e "\033[0;31m\033[1m          Uninstalling Forenyx AI Client             \033[0m"
         echo -e "\033[0;31m=====================================================\033[0m"
         
+        echo -e "  Uninstalling agent: \033[1m$AGENT_NAME\033[0m (~/.forenyx/$AGENT_NAME/)"
         echo -e "\033[0;33mWould you like to keep your custom skills and configuration data?\033[0m"
-        echo -e "  Skills path: ~/.forenyx/agent/skills/custom/"
-        echo -e "  Configurations path: ~/.forenyx/agent/ (settings.json, auth.json, sessions/)"
+        echo -e "  Skills path: ~/.forenyx/$AGENT_NAME/agent/skills/custom/"
+        echo -e "  Configurations path: ~/.forenyx/$AGENT_NAME/agent/ (settings.json, auth.json, sessions/)"
         echo -en "Keep these files? (y/n, default: y): "
         read -r KEEP_DATA
         KEEP_DATA=${KEEP_DATA:-y}
@@ -692,11 +790,36 @@ case "$1" in
         if [ "$KEEP_DATA" = "y" ] || [ "$KEEP_DATA" = "Y" ]; then
             echo -e "\033[0;34mKeeping configurations and skills. Cleaning binaries...\033[0m"
             rm -rf "$BIN_DIR" "$LIBEXEC_DIR"
-            echo -e "  - Cleared binaries and wrappers."
+            echo -e "  - Cleared binaries and wrappers for $AGENT_NAME."
         else
-            echo -e "\033[0;31mCompletely deleting all Forenyx AI data...\033[0m"
+            echo -e "\033[0;31mDeleting all data for agent $AGENT_NAME...\033[0m"
             rm -rf "$FORENYX_DIR"
-            echo -e "  - Cleared ~/.forenyx/ directory."
+            echo -e "  - Cleared ~/.forenyx/$AGENT_NAME/."
+        fi
+
+        # 授权是机器级的，几个智能体共用。卸掉一个就删掉它，剩下的全部启动不了；
+        # 所以只在**本机已经没有别的智能体**时才提出删除，而且要人明确点头。
+        REMAINING=0
+        for d in "$FORENYX_ROOT"/*/; do
+            if [ -d "${d}libexec" ]; then
+                REMAINING=$((REMAINING + 1))
+            fi
+        done
+        if [ "$REMAINING" -gt 0 ]; then
+            echo -e "  - 本机还有 $REMAINING 个智能体，保留共用的授权文件 ~/.forenyx/forenyx.lic"
+        elif [ -f "$FORENYX_ROOT/forenyx.lic" ] || [ -f "$FORENYX_ROOT/.env" ]; then
+            echo -e "\033[0;33m本机已无其它智能体。是否一并删除授权文件与授权配置？\033[0m"
+            echo -e "  ~/.forenyx/forenyx.lic, ~/.forenyx/.env"
+            echo -e "  \033[0;33m删除后重装需要重新激活（内网机器需重新申请 .lic）。\033[0m"
+            echo -en "Delete license data? (y/n, default: n): "
+            read -r DEL_LIC
+            if [ "$DEL_LIC" = "y" ] || [ "$DEL_LIC" = "Y" ]; then
+                rm -f "$FORENYX_ROOT/forenyx.lic" "$FORENYX_ROOT/.env" \
+                      "$FORENYX_ROOT/.heartbeat_cache" "$FORENYX_ROOT/.offline_runs"
+                echo -e "  - Cleared license data."
+            else
+                echo -e "  - Kept license data."
+            fi
         fi
         
         # Cleanup PATH
@@ -709,12 +832,16 @@ case "$1" in
             *) RC_FILE="$HOME/.bashrc" ;;
         esac
         
-        if [ -f "$RC_FILE" ] && grep -q "forenyx/bin" "$RC_FILE"; then
+        # 只删本智能体那一行。原先匹配的是 "forenyx/bin"，在多智能体下会把另外
+        # 四个的 PATH 一起删掉——卸一个，五个都用不了。
+        PATH_PAT="forenyx/$AGENT_NAME/bin"
+        if [ -f "$RC_FILE" ] && grep -q "$PATH_PAT" "$RC_FILE"; then
             TEMP_RC=$(mktemp)
-            grep -v "forenyx/bin" "$RC_FILE" | grep -v "# Forenyx AI CLI PATH configuration" > "$TEMP_RC"
+            grep -v "$PATH_PAT" "$RC_FILE" \
+                | grep -v "# Forenyx AI CLI PATH configuration ($AGENT_NAME)" > "$TEMP_RC" || true
             cat "$TEMP_RC" > "$RC_FILE"
             rm -f "$TEMP_RC"
-            echo -e "  - Removed PATH configuration from $RC_FILE."
+            echo -e "  - Removed $AGENT_NAME PATH configuration from $RC_FILE."
         fi
         
         echo -e "\033[0;32m\033[1mForenyx AI has been successfully uninstalled!\033[0m"
@@ -746,7 +873,7 @@ PATH_LINE=""
 case "$SHELL_NAME" in
     zsh)
         RC_FILE="$HOME/.zshrc"
-        PATH_LINE="export PATH=\"\$HOME/.forenyx/bin:\$PATH\""
+        PATH_LINE="export PATH=\"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
         ;;
     bash)
         if [ -f "$HOME/.bash_profile" ]; then
@@ -754,7 +881,7 @@ case "$SHELL_NAME" in
         else
             RC_FILE="$HOME/.bashrc"
         fi
-        PATH_LINE="export PATH=\"\$HOME/.forenyx/bin:\$PATH\""
+        PATH_LINE="export PATH=\"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
         ;;
     csh|tcsh)
         if [ -f "$HOME/.tcshrc" ]; then
@@ -762,24 +889,26 @@ case "$SHELL_NAME" in
         else
             RC_FILE="$HOME/.cshrc"
         fi
-        PATH_LINE="setenv PATH \"\$HOME/.forenyx/bin:\$PATH\""
+        PATH_LINE="setenv PATH \"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
         ;;
     *)
         RC_FILE="$HOME/.bashrc"
-        PATH_LINE="export PATH=\"\$HOME/.forenyx/bin:\$PATH\""
+        PATH_LINE="export PATH=\"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
         ;;
 esac
 
+# 按智能体判重。匹配 "forenyx/bin" 的话，装了 fnx_dv 之后再装 fnx_rtl 会被
+# 误判成"已配置"，第二个智能体就进不了 PATH。
 if [ -f "$RC_FILE" ]; then
-    if grep -q "forenyx/bin" "$RC_FILE"; then
-        echo -e "  - Path configuration already exists in $RC_FILE."
+    if grep -q "forenyx/$AGENT_NAME/bin" "$RC_FILE"; then
+        echo -e "  - Path configuration for $AGENT_NAME already exists in $RC_FILE."
     else
-        echo -e "  - Adding PATH to $RC_FILE..."
-        echo -e "\n# Forenyx AI CLI PATH configuration\n$PATH_LINE" >> "$RC_FILE"
+        echo -e "  - Adding $AGENT_NAME to PATH in $RC_FILE..."
+        echo -e "\n# Forenyx AI CLI PATH configuration ($AGENT_NAME)\n$PATH_LINE" >> "$RC_FILE"
     fi
 else
     echo -e "  - Shell config file $RC_FILE not found. Creating it..."
-    echo -e "$PATH_LINE" > "$RC_FILE"
+    echo -e "# Forenyx AI CLI PATH configuration ($AGENT_NAME)\n$PATH_LINE" > "$RC_FILE"
 fi
 
 echo -e "${GREEN}${BOLD}=====================================================${NC}"
@@ -792,19 +921,19 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     # selected model"。注意配置入口是 CLI 内的 /login（写 agent/models.json），
     # 不是 ~/.forenyx/.env —— 那个文件不会被注入进程环境，CLI 侧无人读取。
     echo -e "Then, you can start Forenyx AI anywhere by typing:"
-    echo -e "  ${CYAN}${BOLD}forenyx${NC}"
+    echo -e "  ${CYAN}${BOLD}$AGENT_NAME${NC}"
     echo -e "On first launch, run ${CYAN}${BOLD}/login${NC} to configure your on-premise LLM"
     echo -e "  (base URL, API key, model name)."
     # 离线环境下 forenyx update 会被 wrapper 拦下，这里不能再指向它
-    echo -e "This machine is an ${BOLD}offline${NC} deployment; ${CYAN}forenyx update${NC} is unavailable."
+    echo -e "This machine is an ${BOLD}offline${NC} deployment; ${CYAN}$AGENT_NAME update${NC} is unavailable."
     echo -e "To upgrade, obtain a newer offline bundle and run:"
     echo -e "  ${CYAN}${BOLD}./install-release.sh --offline${NC}"
 else
     echo -e "Then, you can start Forenyx AI anywhere by typing:"
-    echo -e "  ${CYAN}${BOLD}forenyx${NC}"
+    echo -e "  ${CYAN}${BOLD}$AGENT_NAME${NC}"
     echo -e "To update Forenyx AI in the future, simply run:"
-    echo -e "  ${CYAN}${BOLD}forenyx update${NC}"
+    echo -e "  ${CYAN}${BOLD}$AGENT_NAME update${NC}"
 fi
 echo -e "To uninstall Forenyx AI, simply run:"
-echo -e "  ${CYAN}${BOLD}forenyx uninstall${NC}"
+echo -e "  ${CYAN}${BOLD}$AGENT_NAME uninstall${NC}"
 echo -e "====================================================="
