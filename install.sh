@@ -644,10 +644,32 @@ if [ ! -f "$GLOBAL_ENV_FILE" ]; then
     echo -e "  - Initializing global user configuration file ~/.forenyx/.env..."
     cat << EOF > "$GLOBAL_ENV_FILE"
 # =============================================================================
-# Forenyx AI Global Configurations (.env)
+# Forenyx AI 全局配置（~/.forenyx/.env）
+#
+# 本机所有智能体（fnx_dv / fnx_rtl / ...）共用这一份。
+# 两组配置作用完全不同，改动前先看清在哪一节。
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# 一、授权 —— 请勿手工修改
+#
+# 由安装脚本写入，license-guard 与 wrapper 按文件读取。
+# CLIENT_ID 在首次安装时算出并与服务端绑定：改了或删了会导致心跳返回 403
+# 「跨设备冒用」，届时需要联系管理员解绑才能恢复。
+# -----------------------------------------------------------------------------
 FORENYX_LICENSE_KEY=$USER_LICENSE
 FORENYX_CLIENT_ID=$CLIENT_ID
+
+# -----------------------------------------------------------------------------
+# 二、文档转换的视觉模型 —— 需要你自己填
+#
+# 供 ic-docx2md 分析 Word / PDF 里的图片（scripts/docx2md.py 用 python-dotenv
+# 直接读本文件）。不填的话该 skill 会在开始前终止并提示来这里配置。
+#
+# 注意：这与 CLI 对话用的模型是两套配置。对话模型走 CLI 内的 /login，写在
+# ~/.forenyx/<智能体名>/agent/auth.json，每个智能体各自一份；这里填的只管
+# 文档转换，且五个智能体共用。
+# -----------------------------------------------------------------------------
 OPENAI_API_KEY=
 OPENAI_API_BASE="https://api.siliconflow.cn"
 ARK_MODEL_NAME='Qwen/Qwen3.8-27B'
