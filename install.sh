@@ -525,6 +525,10 @@ if [ -n "$ERR_MSG" ] || [ -z "$DOWNLOAD_URL" ]; then
     exit 1
 fi
 
+# 服务端给的地址从此只作两件事：判定授权是否通过（上面那个 -z 判断），以及在
+# 客户端拼不出地址时兜底。真正下载哪个包由本脚本自己决定——见下方「下载地址」。
+SERVER_URL="$DOWNLOAD_URL"
+
 # -----------------------------------------------------------------------------
 # 落盘服务端随激活下发的签名授权文件 .lic
 #
@@ -567,34 +571,62 @@ fi
 
 TARBALL_NAME="forenyx-$PLATFORM.tar.gz"
 # -----------------------------------------------------------------------------
-# --release：装指定版本而不是服务端给的最新版
+# 下载地址
 #
-# 授权照常校验（.lic 下发也不变），只把服务端返回的下载地址里的版本段换掉。
-# 之所以能这么干，是因为那是个公开的 GitHub Release 地址，版本就写在路径里：
-#   https://github.com/<repo>/releases/download/v0.4.3/forenyx-<平台>.tar.gz
-# 也就不必为此改服务端。
+# 由本脚本自己拼，不用服务端返回的那个：
 #
-# 先探再下：直接换了就下的话，版本不存在时 GitHub 返回的是一个 404 页面，
-# curl -f 虽会失败，但报的是"下载失败，请检查网络"——把人指向完全错误的方向。
+#   https://github.com/<RELEASES_REPO>/releases/download/<tag>/forenyx-<平台>.tar.gz
+#
+# 这么做是为了让「加一个智能体」只涉及本仓库：建发布仓库、改 RELEASES_REPO 常量，
+# 服务端一行不用动。服务端返回的 download_url 里本来就是公开的 GitHub 地址，
+# 它没有在把关下载——把关的是它前面那一步授权校验。让它同时决定「下载哪个包」，
+# 等于把五个智能体的发布路由塞进授权服务，每加一个都要回去改。
+#
+# 版本从发布仓库的 version.json 取；`--release` 显式指定时以它为准。
+# 拼不出来（比如 version.json 拉不到）就退回服务端给的地址，保证不比原先更差。
 # -----------------------------------------------------------------------------
-if [ -n "$RELEASE_TAG" ]; then
-    PINNED_URL=$(echo "$DOWNLOAD_URL" | sed -E "s#/download/[^/]+/#/download/${RELEASE_TAG}/#")
-    if [ "$PINNED_URL" = "$DOWNLOAD_URL" ]; then
-        echo -e "${YELLOW}⚠ 下载地址不是预期的 Release 形式，--release 无法生效：${NC}"
-        echo -e "   $DOWNLOAD_URL"
-        abort 1
-    fi
+TARGET_TAG="$RELEASE_TAG"
 
-    echo -e "  - 指定版本 ${CYAN}${RELEASE_TAG}${NC}，正在确认该版本存在..."
-    if ! curl -fsIL --max-time 20 "$PINNED_URL" >/dev/null 2>&1; then
-        echo -e "${RED}❌ 找不到 $RELEASE_TAG 的 $PLATFORM 安装包。${NC}"
-        echo -e "${YELLOW}   可能是版本号写错，或该版本没有发布这个平台的产物。${NC}"
-        echo -e "   可用版本见：https://github.com/$RELEASES_REPO/releases"
-        abort 1
+if [ -z "$TARGET_TAG" ]; then
+    VERSION_JSON=$(curl -fsSL --connect-timeout 10 --max-time 20 \
+        "https://raw.githubusercontent.com/$RELEASES_REPO/main/version.json" 2>/dev/null || echo "")
+    # 有 python3 就正经解析。退化到 grep 时也要锚定 "version" 后面紧跟的冒号与引号，
+    # 否则 note 字段里出现 "version" 字样（发版说明里很常见）就会取到错误的值。
+    if command -v python3 >/dev/null 2>&1; then
+        TARGET_TAG=$(echo "$VERSION_JSON" | python3 -c \
+            "import sys, json; print(json.load(sys.stdin).get('version', ''))" 2>/dev/null || echo "")
+    else
+        TARGET_TAG=$(echo "$VERSION_JSON" \
+            | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
     fi
-    DOWNLOAD_URL="$PINNED_URL"
-    echo -e "  - ${YELLOW}注意：本次安装的是指定版本 $RELEASE_TAG，不是云端最新版。${NC}"
-    echo -e "    ${YELLOW}启动时仍会提示有新版本；执行 ${AGENT_NAME} update 会升回最新。${NC}"
+fi
+
+if [ -n "$TARGET_TAG" ]; then
+    # tag 一律带 v 前缀；version.json 里万一写成 0.1.0 也能用
+    case "$TARGET_TAG" in
+        v*) ;;
+        *)  TARGET_TAG="v$TARGET_TAG" ;;
+    esac
+    DOWNLOAD_URL="https://github.com/$RELEASES_REPO/releases/download/$TARGET_TAG/forenyx-$PLATFORM.tar.gz"
+
+    # 先探再下。不探的话，版本不存在时 GitHub 返回的是一个 404 页面，curl -f 报的是
+    # "下载失败，请检查网络"——把人指向完全错误的方向。
+    if ! curl -fsIL --max-time 20 "$DOWNLOAD_URL" >/dev/null 2>&1; then
+        echo -e "${RED}❌ 找不到 $TARGET_TAG 的 $PLATFORM 安装包。${NC}"
+        echo -e "${YELLOW}   仓库：https://github.com/$RELEASES_REPO/releases${NC}"
+        if [ -n "$RELEASE_TAG" ]; then
+            echo -e "${YELLOW}   可能是 --release 写错了版本号，或该版本没发这个平台的产物。${NC}"
+            abort 1
+        fi
+        echo -e "${YELLOW}   version.json 声明的版本尚未发布附件，改用服务端提供的地址。${NC}"
+        DOWNLOAD_URL="$SERVER_URL"
+    elif [ -n "$RELEASE_TAG" ]; then
+        echo -e "  - ${YELLOW}注意：本次安装的是指定版本 $TARGET_TAG，不是云端最新版。${NC}"
+        echo -e "    ${YELLOW}启动时仍会提示有新版本；执行 ${AGENT_NAME} update 会升回最新。${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ 取不到 $RELEASES_REPO 的 version.json，改用服务端提供的下载地址。${NC}"
+    DOWNLOAD_URL="$SERVER_URL"
 fi
 
 echo -e "  - Downloading binaries from $DOWNLOAD_URL..."
@@ -809,7 +841,8 @@ case "$1" in
         VERSION_DATA=$(curl -fsSL --connect-timeout 2 --max-time 3 "$VERSION_URL" 2>/dev/null || echo "")
         
         if [ -n "$VERSION_DATA" ]; then
-            LATEST_VERSION=$(echo "$VERSION_DATA" | grep '"version"' | head -n 1 | cut -d'"' -f4)
+            LATEST_VERSION=$(echo "$VERSION_DATA" \
+            | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
             CUR_VER_CLEAN=$(echo "$CURRENT_VERSION" | tr -d 'v[:space:]')
             LAT_VER_CLEAN=$(echo "$LATEST_VERSION" | tr -d 'v[:space:]')
             
@@ -844,7 +877,8 @@ case "$1" in
             exit 1
         fi
         
-        LATEST_VERSION=$(echo "$VERSION_DATA" | grep '"version"' | head -n 1 | cut -d'"' -f4)
+        LATEST_VERSION=$(echo "$VERSION_DATA" \
+            | grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
         if [ -z "$LATEST_VERSION" ]; then
             echo -e "\033[0;31mError: Could not parse version from version.json\033[0m"
             exit 1
