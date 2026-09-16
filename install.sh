@@ -86,12 +86,17 @@ USER_LICENSE=""
 # BUNDLE_DIR 默认取本脚本所在目录 —— 离线包里脚本和 tarball 是并排放的，
 # 客户解开包后直接 ./install-release.sh --offline 即可，不必再指定路径。
 OFFLINE_MODE=0
+RELEASE_TAG=""
 BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --license)
             USER_LICENSE="$2"
+            shift 2
+            ;;
+        --release)
+            RELEASE_TAG="$2"
             shift 2
             ;;
         --offline)
@@ -108,6 +113,27 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# 格式校验放在最前面：拼错一个字符不该让人先等一次授权服务器往返（还可能撞上
+# Supabase 冷启动的 15~120 秒退避重试）才被告知。
+if [ -n "$RELEASE_TAG" ]; then
+    case "$RELEASE_TAG" in
+        v[0-9]*.[0-9]*.[0-9]*) ;;
+        *)
+            echo "错误：--release 格式不对：'$RELEASE_TAG'" >&2
+            echo "      应形如 v0.4.1（带 v 前缀的三段版本号）。" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+# --release 走的是"向服务端要下载链接再改版本段"这条路，离线安装压根不联网，
+# 装哪个版本由包里放的 tarball 决定，两者没法叠加。说清楚，别让人以为生效了。
+if [ -n "$RELEASE_TAG" ] && [ "$OFFLINE_MODE" = "1" ]; then
+    echo "错误：--release 与 --offline 不能同时使用。" >&2
+    echo "      离线安装的版本由离线包内的 tarball 决定。" >&2
+    exit 1
+fi
 
 # 本仓库构建的智能体。定义必须早于任何用到它的输出——横幅在前、定义在后会打出
 # "Forenyx AI — "（名字是空的），而且 shell 不会报错。
@@ -528,6 +554,37 @@ else
 fi
 
 TARBALL_NAME="forenyx-$PLATFORM.tar.gz"
+# -----------------------------------------------------------------------------
+# --release：装指定版本而不是服务端给的最新版
+#
+# 授权照常校验（.lic 下发也不变），只把服务端返回的下载地址里的版本段换掉。
+# 之所以能这么干，是因为那是个公开的 GitHub Release 地址，版本就写在路径里：
+#   https://github.com/<repo>/releases/download/v0.4.3/forenyx-<平台>.tar.gz
+# 也就不必为此改服务端。
+#
+# 先探再下：直接换了就下的话，版本不存在时 GitHub 返回的是一个 404 页面，
+# curl -f 虽会失败，但报的是"下载失败，请检查网络"——把人指向完全错误的方向。
+# -----------------------------------------------------------------------------
+if [ -n "$RELEASE_TAG" ]; then
+    PINNED_URL=$(echo "$DOWNLOAD_URL" | sed -E "s#/download/[^/]+/#/download/${RELEASE_TAG}/#")
+    if [ "$PINNED_URL" = "$DOWNLOAD_URL" ]; then
+        echo -e "${YELLOW}⚠ 下载地址不是预期的 Release 形式，--release 无法生效：${NC}"
+        echo -e "   $DOWNLOAD_URL"
+        abort 1
+    fi
+
+    echo -e "  - 指定版本 ${CYAN}${RELEASE_TAG}${NC}，正在确认该版本存在..."
+    if ! curl -fsIL --max-time 20 "$PINNED_URL" >/dev/null 2>&1; then
+        echo -e "${RED}❌ 找不到 $RELEASE_TAG 的 $PLATFORM 安装包。${NC}"
+        echo -e "${YELLOW}   可能是版本号写错，或该版本没有发布这个平台的产物。${NC}"
+        echo -e "   可用版本见：https://github.com/$RELEASES_REPO/releases"
+        abort 1
+    fi
+    DOWNLOAD_URL="$PINNED_URL"
+    echo -e "  - ${YELLOW}注意：本次安装的是指定版本 $RELEASE_TAG，不是云端最新版。${NC}"
+    echo -e "    ${YELLOW}启动时仍会提示有新版本；执行 ${AGENT_NAME} update 会升回最新。${NC}"
+fi
+
 echo -e "  - Downloading binaries from $DOWNLOAD_URL..."
 TMP_TARBALL="/tmp/$TARBALL_NAME"
 

@@ -1,4 +1,4 @@
-# Forenyx AI CLI
+# fnx_dv AI CLI
 
 > **芯片验证工程师专属的闭源智能编码 Agent 终端。**
 > 免源码、零依赖，支持快速部署。
@@ -26,14 +26,33 @@ source ~/.tcshrc       # Tcsh 用户
 # 或者直接重新打开一个新的终端窗口
 
 # 3. 运行启动客户端
-forenyx
+fnx_dv
 ```
+
+### 安装指定版本
+
+如需安装特定历史版本或在不同版本间切换，可使用 `--release` 参数指定目标版本号（版本号须带 `v` 前缀，形如 `v0.4.1`）：
+
+```bash
+# 方式一：通过管道直接指定版本安装
+curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash -s -- --release v0.4.1
+
+# 方式二：下载安装脚本后执行
+curl -fsSLO https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh
+bash install.sh --release v0.4.1
+```
+
+> [!TIP]
+> * **免交互授权**：可通过 `--license` 参数一并传入授权码，例如：`bash install.sh --release v0.4.1 --license FNX-XXXX-XXXX-XXXX`。
+> * **版本覆盖 / 回退**：若本机已完成过安装与激活，再次执行指定版本命令会自动沿用已绑定的 License 并安全覆盖程序。
+> * **可用版本列表**：可前往 [GitHub Releases](https://github.com/HwJhx/forenyx-releases/releases) 页面查看全部历史发布版本。
+> * *注：`--release` 参数仅适用于在线安装，不可与 `--offline` 离线参数同时使用。*
 
 ---
 
 ## 配置指南与最佳实践 (SiliconFlow 接入)
 
-首次运行 `forenyx` 后，请按照以下步骤配置大模型及推理服务：
+首次运行 `fnx_dv` 后，请按照以下步骤配置大模型及推理服务：
 
 ### 1. 配置 API 认证
 
@@ -113,7 +132,7 @@ TEMPERATURE=0.1
 
 ---
 
-配置完成后，即可开始使用 Forenyx 客户端进行芯片验证辅助编码。
+配置完成后，即可开始使用 fnx_dv 客户端进行芯片验证辅助编码。
 
 ---
 
@@ -124,18 +143,28 @@ TEMPERATURE=0.1
 若发布仓库有最新版本更新，无需重新运行安装脚本，直接在终端中执行：
 
 ```bash
-forenyx update
+fnx_dv update
 ```
 
 升级系统会自动读取本地 `.env` 中已绑定的 License 密钥，发起静默安全校验并执行一键覆盖升级。
 *(注：如果您是从不带 License 校验的历史极老版本（如 `v0.3.0`）升级，终端会抛出友好提示，引导您手动运行一次前台 `curl | bash` 安装命令以补充完成首次激活绑定。)*
+
+### 版本回退 / 切换指定版本
+
+若需要回退或切换到特定的历史版本，无需先卸载，直接传入 `--release` 参数重新运行安装命令即可安全覆盖：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash -s -- --release v0.4.1
+```
+
+系统会自动读取并沿用本机已绑定的 License 及配置，仅对二进制程序进行版本切换。
 
 ### 客户端卸载 (Uninstall)
 
 若需卸载客户端并清理环境变量，直接在终端中执行：
 
 ```bash
-forenyx uninstall
+fnx_dv uninstall
 ```
 
 卸载程序将自动清理环境变量并移除客户端目录，您可以选择是否保留自定义技能 (Custom Skills) 和个人历史会话记录。
@@ -290,7 +319,7 @@ forenyx uninstall
 
 ## ⚖️ 开源致谢与授权声明
 
-Forenyx AI CLI (Based on Pi) 是基于开源项目 [earendil-works/pi](https://github.com/earendil-works/pi) 进行二次开发与定制的闭源商业分发版本。我们对 `pi` 及其开源社区的杰出工作表示由衷的感谢。
+fnx_dv AI CLI (Based on Pi) 是基于开源项目 [earendil-works/pi](https://github.com/earendil-works/pi) 进行二次开发与定制的闭源商业分发版本。我们对 `pi` 及其开源社区的杰出工作表示由衷的感谢。
 
 根据 **MIT 许可证 (MIT License)** 的合规要求，在此保留并附带原项目的版权声明及许可条款全文：
 
