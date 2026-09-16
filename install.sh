@@ -228,8 +228,20 @@ if [ -d "$FORENYX_ROOT/libexec" ] && [ ! -d "$FORENYX_DIR/libexec" ]; then
     echo -e "${RED}❌ 检测到旧版目录布局：$FORENYX_ROOT/libexec${NC}"
     echo -e "${YELLOW}   新版把每个智能体装进 ~/.forenyx/<智能体名>/，与旧布局不能并存。${NC}"
     echo
+    # 旧布局上根本没有 $AGENT_NAME 这个命令——那是这次要装的新命令名。这台机器
+    # 手里的是旧 wrapper（历来叫 forenyx）。从磁盘上实际找出来，别让人去敲一个
+    # 不存在的命令。
+    LEGACY_CMD=""
+    for c in "$FORENYX_ROOT"/bin/*; do
+        if [ -f "$c" ] && [ -x "$c" ]; then
+            LEGACY_CMD="$(basename "$c")"
+            break
+        fi
+    done
+    LEGACY_CMD="${LEGACY_CMD:-forenyx}"
+
     echo -e "   请先清理旧版："
-    echo -e "     ${CYAN}${AGENT_NAME} uninstall${NC}   （选择不保留数据，或按下面手工清）"
+    echo -e "     ${CYAN}${LEGACY_CMD} uninstall${NC}   （选择不保留数据，或按下面手工清）"
     echo -e "   手工清理："
     echo -e "     ${CYAN}rm -rf ~/.forenyx/bin ~/.forenyx/libexec${NC}"
     echo -e "     然后删掉 ~/.bashrc（或 .zshrc）里这一行："
