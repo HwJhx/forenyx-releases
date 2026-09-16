@@ -27,7 +27,11 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
+# 本仓库卸载的智能体。**必须定义在下面这些路径推导之前** —— 放晚了
+# AGENT_HOME 会算成 "~/.forenyx/"（名字为空），而后面有 rm -rf "$AGENT_HOME"，
+# 那就是把整个 ~/.forenyx 连同授权文件一起删掉，且 shell 全程不报错。
 AGENT_NAME="fnx_dv"
+
 FORENYX_ROOT="$HOME/.forenyx"
 AGENT_HOME="$FORENYX_ROOT/$AGENT_NAME"
 BIN_DIR="$AGENT_HOME/bin"

@@ -109,8 +109,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# 本仓库构建的智能体。定义必须早于任何用到它的输出——横幅在前、定义在后会打出
+# "Forenyx AI — "（名字是空的），而且 shell 不会报错。
+AGENT_NAME="fnx_dv"
+
 echo -e "${CYAN}${BOLD}=====================================================${NC}"
-echo -e "${CYAN}${BOLD}           Installing Forenyx AI (Forenyx)            ${NC}"
+echo -e "${CYAN}${BOLD}        Installing Forenyx AI — ${AGENT_NAME}${NC}"
 echo -e "${CYAN}${BOLD}=====================================================${NC}"
 
 # 1. Platform Detection
@@ -163,7 +167,6 @@ echo -e "${BLUE}[2/5] Setting up directories...${NC}"
 # piConfig.agentName 一致** —— 那是二进制自带的身份，横幅与 --version 从它来；
 # 这里的值定目录名、命令名与 PATH。安装脚本在下载解包之前就要用它定目录，
 # 没法反过来从 package.json 读，所以两处都写、装完再校验（见第 4 步之后）。
-AGENT_NAME="fnx_dv"
 FORENYX_ROOT="$HOME/.forenyx"
 FORENYX_DIR="$FORENYX_ROOT/$AGENT_NAME"
 BIN_DIR="$FORENYX_DIR/bin"
@@ -200,7 +203,7 @@ if [ -d "$FORENYX_ROOT/libexec" ] && [ ! -d "$FORENYX_DIR/libexec" ]; then
     echo -e "${YELLOW}   新版把每个智能体装进 ~/.forenyx/<智能体名>/，与旧布局不能并存。${NC}"
     echo
     echo -e "   请先清理旧版："
-    echo -e "     ${CYAN}forenyx uninstall${NC}       （选择不保留数据，或按下面手工清）"
+    echo -e "     ${CYAN}${AGENT_NAME} uninstall${NC}   （选择不保留数据，或按下面手工清）"
     echo -e "   手工清理："
     echo -e "     ${CYAN}rm -rf ~/.forenyx/bin ~/.forenyx/libexec${NC}"
     echo -e "     然后删掉 ~/.bashrc（或 .zshrc）里这一行："
@@ -329,7 +332,7 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     else
         echo -e "${YELLOW}  - 警告: 离线包中未包含 $PLATFORM 的 fd/rg${NC}"
         echo -e "${YELLOW}    该包由旧版打包脚本生成。请用新版 make-offline-bundle.sh 重新打包，${NC}"
-        echo -e "${YELLOW}    否则 forenyx 的文件查找与文本搜索功能会报错。${NC}"
+        echo -e "${YELLOW}    否则 ${AGENT_NAME} 的文件查找与文本搜索功能会报错。${NC}"
     fi
 
     # ---- hostid 采集工具 ----
@@ -364,7 +367,7 @@ if [ "$OFFLINE_MODE" = "1" ]; then
         echo -e "  - ${CYAN}ℹ 离线包未附带授权文件，沿用本机已有的 forenyx.lic${NC}"
     else
         echo -e "${YELLOW}⚠ 离线包内没有授权文件（forenyx.lic），本机也没有。${NC}"
-        echo -e "${YELLOW}   安装可以完成，但 forenyx 启动时会因缺少授权而退出。${NC}"
+        echo -e "${YELLOW}   安装可以完成，但 ${AGENT_NAME} 启动时会因缺少授权而退出。${NC}"
         echo -e "${YELLOW}   请把安装目录下 forenyx-hostid.sh 的输出发给管理员换取授权文件，${NC}"
         echo -e "${YELLOW}   拿到后放到 $FORENYX_ROOT/forenyx.lic（权限 600）即可。${NC}"
     fi
@@ -722,7 +725,7 @@ case "$1" in
             if [ "$CUR_VER_CLEAN" = "$LAT_VER_CLEAN" ]; then
                 echo -e "\033[1;92m✓ You are already on the latest version.\033[0m"
             else
-                echo -e "\033[0;33m⚠️ New version \033[1;92m$LATEST_VERSION\033[0;33m is available. Run \033[1;36mforenyx update\033[0;33m to upgrade.\033[0m"
+                echo -e "\033[0;33m⚠️ New version \033[1;92m$LATEST_VERSION\033[0;33m is available. Run \033[1;36m$AGENT_NAME update\033[0;33m to upgrade.\033[0m"
             fi
         else
             echo -e "\033[0;90mNote: Failed to connect to the update server. Skipping update check.\033[0m"
@@ -731,7 +734,7 @@ case "$1" in
         ;;
     update)
         echo -e "\033[0;36m=====================================================\033[0m"
-        echo -e "\033[0;36m\033[1m           Updating Forenyx AI Client                \033[0m"
+        echo -e "\033[0;36m\033[1m        Updating $APP_DISPLAY_NAME — $AGENT_NAME\033[0m"
         echo -e "\033[0;36m=====================================================\033[0m"
 
         if [ "$IS_OFFLINE" = "1" ]; then
@@ -788,7 +791,7 @@ case "$1" in
         ;;
     uninstall)
         echo -e "\033[0;31m=====================================================\033[0m"
-        echo -e "\033[0;31m\033[1m          Uninstalling Forenyx AI Client             \033[0m"
+        echo -e "\033[0;31m\033[1m      Uninstalling $APP_DISPLAY_NAME — $AGENT_NAME\033[0m"
         echo -e "\033[0;31m=====================================================\033[0m"
         
         echo -e "  Uninstalling agent: \033[1m$AGENT_NAME\033[0m (~/.forenyx/$AGENT_NAME/)"
@@ -856,7 +859,7 @@ case "$1" in
             echo -e "  - Removed $AGENT_NAME PATH configuration from $RC_FILE."
         fi
         
-        echo -e "\033[0;32m\033[1mForenyx AI has been successfully uninstalled!\033[0m"
+        echo -e "\033[0;32m\033[1m$AGENT_NAME has been successfully uninstalled!\033[0m"
         exit 0
         ;;
 esac
@@ -924,7 +927,7 @@ else
 fi
 
 echo -e "${GREEN}${BOLD}=====================================================${NC}"
-echo -e "${GREEN}${BOLD}      Forenyx AI installation finished successfully!  ${NC}"
+echo -e "${GREEN}${BOLD}   ${AGENT_NAME} installation finished successfully!${NC}"
 echo -e "${GREEN}${BOLD}=====================================================${NC}"
 echo -e "To apply the environment changes immediately, please run:"
 echo -e "  ${CYAN}${BOLD}source $RC_FILE${NC}"
@@ -932,20 +935,20 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     # 离线机器上没有可用的 LLM 配置，不配就会撞上 "No API key found for the
     # selected model"。注意配置入口是 CLI 内的 /login（写 agent/models.json），
     # 不是 ~/.forenyx/.env —— 那个文件不会被注入进程环境，CLI 侧无人读取。
-    echo -e "Then, you can start Forenyx AI anywhere by typing:"
+    echo -e "Then, you can start it anywhere by typing:"
     echo -e "  ${CYAN}${BOLD}$AGENT_NAME${NC}"
     echo -e "On first launch, run ${CYAN}${BOLD}/login${NC} to configure your on-premise LLM"
     echo -e "  (base URL, API key, model name)."
     # 离线环境下 forenyx update 会被 wrapper 拦下，这里不能再指向它
-    echo -e "This machine is an ${BOLD}offline${NC} deployment; ${CYAN}$AGENT_NAME update${NC} is unavailable."
+    echo -e "This machine is an ${BOLD}offline${NC} deployment; ${CYAN}${AGENT_NAME} update${NC} is unavailable."
     echo -e "To upgrade, obtain a newer offline bundle and run:"
     echo -e "  ${CYAN}${BOLD}./install-release.sh --offline${NC}"
 else
-    echo -e "Then, you can start Forenyx AI anywhere by typing:"
+    echo -e "Then, you can start it anywhere by typing:"
     echo -e "  ${CYAN}${BOLD}$AGENT_NAME${NC}"
-    echo -e "To update Forenyx AI in the future, simply run:"
+    echo -e "To update ${AGENT_NAME} in the future, simply run:"
     echo -e "  ${CYAN}${BOLD}$AGENT_NAME update${NC}"
 fi
-echo -e "To uninstall Forenyx AI, simply run:"
+echo -e "To uninstall ${AGENT_NAME}, simply run:"
 echo -e "  ${CYAN}${BOLD}$AGENT_NAME uninstall${NC}"
 echo -e "====================================================="
