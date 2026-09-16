@@ -170,6 +170,18 @@ BIN_DIR="$FORENYX_DIR/bin"
 LIBEXEC_DIR="$FORENYX_DIR/libexec"
 AGENT_DIR="$FORENYX_DIR/agent"
 
+# 提前退出前把 stdin 读完再走。
+#
+# 本脚本常以 `curl … | bash -s --` 运行，此时 stdin 就是脚本正文本身。中途 exit
+# 会让 bash 不再读，curl 写不完管道 → "curl: (23) Failed writing body"。那行噪音
+# 出现在我们自己打印的说明下面，看起来像真出了错，会盖过真正要看的提示。
+#
+# `[ -t 0 ]` 是必需的：直接 `bash install.sh` 跑时 stdin 是终端，无脑 cat 会挂住。
+abort() {
+    [ -t 0 ] || cat >/dev/null 2>&1 || true
+    exit "${1:-1}"
+}
+
 # ---------------------------------------------------------------------------
 # 旧版布局拦截
 #
@@ -199,7 +211,7 @@ if [ -d "$FORENYX_ROOT/libexec" ] && [ ! -d "$FORENYX_DIR/libexec" ]; then
     echo -e "     ${CYAN}cp -r ~/.forenyx/agent/. ~/.forenyx/$AGENT_NAME/agent/${NC}"
     echo
     echo -e "${YELLOW}   授权文件 ~/.forenyx/forenyx.lic 与 .env 不用动，新版仍然用它们。${NC}"
-    exit 1
+    abort 1
 fi
 
 mkdir -p "$FORENYX_ROOT"
@@ -620,7 +632,7 @@ if [ -n "$BUILT_AGENT" ] && [ "$BUILT_AGENT" != "$AGENT_NAME" ]; then
     echo -e "${RED}❌ 智能体名不一致：安装脚本写的是 '$AGENT_NAME'，"
     echo -e "   而下载到的二进制自带的是 '$BUILT_AGENT'。${NC}"
     echo -e "${YELLOW}   多半是装错了发布仓库，或两个仓库的版本没对齐。已中止，未改动 PATH。${NC}"
-    exit 1
+    abort 1
 fi
 
 # 4. Generate Forenyx CLI Shell Wrapper
