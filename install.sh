@@ -613,7 +613,7 @@ if [ -n "$TARGET_TAG" ]; then
     # "下载失败，请检查网络"——把人指向完全错误的方向。
     if ! curl -fsIL --max-time 20 "$DOWNLOAD_URL" >/dev/null 2>&1; then
         echo -e "${RED}❌ 找不到 $TARGET_TAG 的 $PLATFORM 安装包。${NC}"
-        echo -e "${YELLOW}   仓库：https://github.com/$RELEASES_REPO/releases${NC}"
+        echo -e "${YELLOW}   请确认该版本已发布对应平台的安装包。${NC}"
         if [ -n "$RELEASE_TAG" ]; then
             echo -e "${YELLOW}   可能是 --release 写错了版本号，或该版本没发这个平台的产物。${NC}"
             abort 1
@@ -625,11 +625,21 @@ if [ -n "$TARGET_TAG" ]; then
         echo -e "    ${YELLOW}启动时仍会提示有新版本；执行 ${AGENT_NAME} update 会升回最新。${NC}"
     fi
 else
-    echo -e "${YELLOW}⚠ 取不到 $RELEASES_REPO 的 version.json，改用服务端提供的下载地址。${NC}"
+    echo -e "${YELLOW}⚠ 取不到版本信息，改用服务端提供的下载地址。${NC}"
     DOWNLOAD_URL="$SERVER_URL"
 fi
 
-echo -e "  - Downloading binaries from $DOWNLOAD_URL..."
+# 打印下载地址时隐去仓库归属，只留路径。
+#
+# 发布仓库名对客户是实现细节，没必要出现在安装日志里（截图外发、贴issue 时尤其）。
+# 注意这只是**不显示**，不是保密：脚本本身是公开 curl 下来的，地址就写在里面。
+short_url() {
+    local rest="${1#https://github.com/*/*/}"
+    # 没匹配上（非 GitHub 地址，如服务端兜底给的）就原样返回，那种情况反而要看全
+    [ "$rest" = "$1" ] && printf '%s' "$1" || printf '/%s' "$rest"
+}
+
+echo -e "  - Downloading binaries from $(short_url "$DOWNLOAD_URL")..."
 TMP_TARBALL="/tmp/$TARBALL_NAME"
 
 # Download with curl
