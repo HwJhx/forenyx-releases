@@ -1,4 +1,4 @@
 {
-  "version": "v0.4.6",
-  "note": "### fnx_dv 0.4.6 \n- 1. 实现精简版测试报告生成的skill \n- 2.feat(coding-agent): /uvm-testcase-auto 运行期间对扩展报忙"
+  "version": "v0.4.7",
+  "note": "### fnx_dv 0.4.7 \n- 1. 实现精简版测试报告生成的skill \n- 2.feat(coding-agent): /uvm-testcase-auto 运行期间对扩展报忙"
 }
