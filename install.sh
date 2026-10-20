@@ -4,7 +4,7 @@
 # Forenyx AI Installer (Commercial Closed-Source Version)
 # =============================================================================
 # Supported OS: macOS, Linux
-# Dependencies: curl, tar
+# Dependencies: curl, tar, perl（读写 ~/.forenyx/.env 用，见 ENV_PL）
 # =============================================================================
 
 set -e
@@ -69,6 +69,127 @@ get_machine_id() {
 }
 # <<< HOSTID_FN_END
 
+# ~/.forenyx/.env 的读写规则，与客户端 license-guard.ts 的 readEnvValue 保持一致。
+# 安装器、wrapper 与客户端各读各的，规则不同就会出现「安装器以为写好了，客户端读到的
+# 还是旧值」：手改出缩进行、重复行、带引号的值、BOM 或不间断空格时尤其明显。规则：
+#   · 每行先按 JavaScript String.trim() 的空白集合去掉两端（ASCII 空白、BOM、NBSP、
+#     Unicode Zs 类空格、U+2028/U+2029）；以「KEY=」开头的才算匹配；
+#   · 多行匹配时只认第一行（哪怕它的值是空的，也不再往后找）；
+#   · 值取第一个 = 之后，去两端空白，再各去掉开头、结尾的一个引号。
+# 这里用 perl 按字节匹配，不依赖 locale。perl 随 macOS 与主流 Linux 基础系统提供。
+# 整段脚本存在 ENV_PL 里：wrapper 通过 declare -p / declare -f 原样写入，只保留一份。
+ENV_PL='
+my $ws = qr/(?:[\t\x0b\f\r ]|\xEF\xBB\xBF|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80)/;
+sub norm { my $s = shift; $s =~ s/^$ws+//; $s =~ s/$ws+\z//; return $s; }
+my $k = $ENV{ENVKEY}; my $m = $ENV{ENVMODE}; my $pre = "$k=";
+local $/; my $c = <>; $c = "" unless defined $c;
+my @e = split /\n/, $c, -1;
+my $nl = 0;
+if (@e && $e[-1] eq "") { pop @e; $nl = 1; }
+if ($m eq "count") {
+    my $n = 0;
+    for my $line (@e) { $n++ if index(norm($line), $pre) != 0; }
+    print "$n\n";
+    exit 0;
+}
+if ($m eq "get") {
+    for my $line (@e) {
+        my $t = norm($line);
+        next unless index($t, $pre) == 0;
+        my $v = norm(substr($t, length $pre));
+        $v =~ s/^["\x27]//; $v =~ s/["\x27]\z//;
+        print "$v\n";
+        exit 0;
+    }
+    exit 0;
+}
+if ($m eq "has") {
+    for my $line (@e) { exit 0 if index(norm($line), $pre) == 0; }
+    exit 1;
+}
+my $done = 0; my @out;
+for my $line (@e) {
+    if (index(norm($line), $pre) == 0) {
+        if ($m eq "set" && !$done) { push @out, "$k=$ENV{ENVVAL}"; $done = 1; }
+        next;
+    }
+    push @out, $line;
+}
+if ($m eq "set" && !$done) { push @out, "$k=$ENV{ENVVAL}"; $nl = 1; }
+if (@out) { my $o = join("\n", @out); $o .= "\n" if $nl; print $o; }
+'
+
+# 自检：用已知输入真正运行 ENV_PL，结果必须是 1。只看 perl 能否运行不够：
+# 一个静默退出 0 的 perl 也能通过，那样读出来是空值，写回时会把 .env 清空。
+env_selftest() {
+    local t got
+    t=$(mktemp "${TMPDIR:-/tmp}/forenyx-envtest.XXXXXX") || return 1
+    printf '%b' '\xEF\xBB\xBF  FORENYX_OFFLINE=1 \r\nOTHER=0\n' > "$t"
+    got=$(ENVMODE=get ENVKEY=FORENYX_OFFLINE perl -e "$ENV_PL" "$t" 2>/dev/null)
+    rm -f "$t"
+    [ "$got" = "1" ]
+}
+
+# 读：打印第一个匹配行的值；没有匹配行时打印空。总是返回 0，调用方在 set -e 下可安全赋值。
+env_get() { [ -f "$2" ] || return 0; ENVMODE=get ENVKEY="$1" perl -e "$ENV_PL" "$2"; }
+# 有没有任何匹配行（包括值为空的行）。
+env_has() { [ -f "$2" ] || return 1; ENVMODE=has ENVKEY="$1" perl -e "$ENV_PL" "$2"; }
+
+# 把临时文件写回原文件，保留原文件的权限与属主；写失败时把原内容恢复回去。
+env_commit() {
+    local file="$1" tmp="$2" bak
+    bak=$(mktemp "$file.bak.XXXXXX") || { rm -f "$tmp"; echo "无法创建备份文件，未改动 $file" >&2; return 1; }
+    if [ -f "$file" ] && ! cat "$file" > "$bak"; then
+        rm -f "$tmp" "$bak"; echo "无法读取 $file 做备份，未改动" >&2; return 1
+    fi
+    if cat "$tmp" > "$file"; then
+        rm -f "$tmp" "$bak"; return 0
+    fi
+    # 写入失败：若目标内容与备份一致（比如连打开都失败），原内容没有动，直接清理。
+    if [ -f "$file" ] && cmp -s "$file" "$bak"; then
+        rm -f "$tmp" "$bak"; echo "写入 $file 失败，原内容未改动" >&2; return 1
+    fi
+    # 写入中途失败：用备份恢复。恢复成功才删备份；恢复也失败则保留备份，并告诉用户去哪找。
+    if [ -f "$file" ] && cat "$bak" > "$file" 2>/dev/null; then
+        rm -f "$tmp" "$bak"; echo "写入 $file 失败，已恢复原内容" >&2
+    else
+        rm -f "$tmp"; echo "写入 $file 失败，且恢复也失败。原内容的备份在：$bak" >&2
+    fi
+    return 1
+}
+
+# 第一个匹配行改写成「KEY=值」，删除其余匹配行（含缩进行）；没有匹配行就追加。
+# 只留第一个匹配行是因为客户端取的就是第一个：只改后面的行，前面的旧值照样生效。
+# 值走环境变量传入，不经过 shell 或 awk 的转义。
+env_set() {
+    local key="$1" val="$2" file="$3" tmp
+    tmp=$(mktemp "$file.XXXXXX") || return 1
+    if ! ENVMODE=set ENVKEY="$key" ENVVAL="$val" perl -e "$ENV_PL" "$file" > "$tmp"; then
+        rm -f "$tmp"; echo "读取 $file 失败，未改动" >&2; return 1
+    fi
+    # 写回前校验新内容：空输出、目标键的值不对、或其他配置行数变了，都说明 perl 没有正确执行。
+    # 这类情况绝不能覆盖 .env。（校验与生成都走同一份 ENV_PL；它防的是 perl 异常，不防恶意替换。）
+    local got old_n new_n
+    got=$(ENVMODE=get ENVKEY="$key" perl -e "$ENV_PL" "$tmp" 2>/dev/null)
+    old_n=$(ENVMODE=count ENVKEY="$key" perl -e "$ENV_PL" "$file" 2>/dev/null)
+    new_n=$(ENVMODE=count ENVKEY="$key" perl -e "$ENV_PL" "$tmp" 2>/dev/null)
+    if [ ! -s "$tmp" ] || [ "$got" != "$val" ] || [ -z "$old_n" ] || [ "$old_n" != "$new_n" ]; then
+        rm -f "$tmp"; echo "生成 $file 的新内容校验失败（perl 输出异常），未改动" >&2; return 1
+    fi
+    env_commit "$file" "$tmp"
+}
+
+# 删除所有匹配行（含缩进行、重复行）。
+env_del() {
+    local key="$1" file="$2" tmp
+    [ -f "$file" ] || return 0
+    tmp=$(mktemp "$file.XXXXXX") || return 1
+    if ! ENVMODE=del ENVKEY="$key" perl -e "$ENV_PL" "$file" > "$tmp"; then
+        rm -f "$tmp"; echo "读取 $file 失败，未改动" >&2; return 1
+    fi
+    env_commit "$file" "$tmp"
+}
+
 # --print-client-id：只算不装，打印 client_id 后退出。
 # 供两处使用：① 与 forenyx-hostid.sh 做一致性断言（防止两边算法漂移）；
 # ② 已安装的机器上自查当前指纹。放在参数解析之前，避免走完整个安装流程。
@@ -78,6 +199,13 @@ if [ "${1:-}" = "--print-client-id" ]; then
     trap - EXIT
     get_machine_id
     exit 0
+fi
+
+# 缺 perl 时在改动任何文件之前就退出，不留下半装的安装目录与 .env。
+# 放在 --print-client-id 之后：那个只读分支不用 perl，缺 perl 时照样要能输出设备标识。
+if ! env_selftest; then
+    echo "❌ perl 无法正确运行（自检失败）：安装器读写 ~/.forenyx/.env 需要它。请先安装或修复 perl 再重试。" >&2
+    exit 1
 fi
 
 USER_LICENSE=""
@@ -321,19 +449,14 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     if [ -z "$CLIENT_ID" ]; then
         CLIENT_ID="unknown-client"
     fi
-    # 离线部署必须带真实授权码。
+    # 授权码可选（离线包通用化，docs/claude/offline-generic-bundle-plan.md §3.E）。
     #
-    # 早先这里默认写占位符 OFFLINE，因为当时离线机器完全不发心跳，占位符无人过问。
-    # 现在离线也走同一条校验流程（只是超时更短），一旦机器哪天接通外网，服务端
-    # 查无此码就会返回 403 —— 把装得好好的机器判成无权使用。
+    # 通用离线包在拿到授权之前就要能装上：客户先装，再用 hostid 换授权文件、用
+    # `<智能体> license import` 导入。不带 --license 时 .env 里不写授权码，客户端
+    # 改从已验签的授权文件里取（license-guard.ts 的 resolveCredentials），所以
+    # 通网后心跳用的仍是真实授权码，不会出现早先占位符 OFFLINE 被服务端 403 的问题。
     #
-    # 这条不增加客户负担：签发 .lic 本来就需要一个真实授权码，客户手上一定有。
-    if [ -z "$USER_LICENSE" ]; then
-        echo -e "${RED}❌ 离线安装必须提供授权码${NC}"
-        echo -e "${YELLOW}   用法: $0 --offline --bundle <离线包目录> --license FNX-XXXX-XXXX-XXXX${NC}"
-        echo -e "   授权码就是当初换取 forenyx.lic 时用的那一个。"
-        exit 1
-    fi
+    # 授权的强制点在启动时，安装阶段不拦。
     EXPIRE_DISPLAY=""
 
     echo -e "  - Extracting to $LIBEXEC_DIR..."
@@ -364,7 +487,7 @@ if [ "$OFFLINE_MODE" = "1" ]; then
                 cp -f "$TOOLS_SRC/$t" "$AGENT_DIR/bin/$t"
                 chmod +x "$AGENT_DIR/bin/$t"
             else
-                echo -e "${YELLOW}  - 警告: 离线包中缺少 $t，文件查找/文本搜索功能将不可用${NC}"
+                echo -e "${YELLOW}  - 警告: 离线包中缺少 ${t}，文件查找/文本搜索功能将不可用${NC}"
             fi
         done
     else
@@ -382,38 +505,37 @@ if [ "$OFFLINE_MODE" = "1" ]; then
     fi
 
     # ---- 授权文件 ----
-    # 离线机器没有第二次机会：它连不上服务端，拿不到 .lic 就永远启动不了。
-    # 在线分支可以"这次没拿到、下次心跳补上"，这里不行，所以缺失必须当场报错，
-    # 而不是像在线那样静默跳过。
+    # 通用离线包不带授权文件，这是常态：安装照常完成，结束时打印 hostid 与导入方法
+    # （见脚本末尾 NEED_LIC）。只有 make-offline-bundle.sh --lic 打出的定制包才带。
     #
-    # 不校验签名 —— 私钥在服务端，安装脚本手里只有公钥能做的事，
-    # 而验签本来就是客户端启动时要做的。这里只保证文件确实落到位。
+    # 带了就必须落到位，写失败当场报错 —— 包里明明有授权，装完却打不开，现场很难
+    # 想到是写盘失败。不校验签名：私钥在服务端，验签是客户端启动时的事。
+    #
+    # 提示里不出现授权文件的存放路径（用户决定 D2）：导入一律走 license import。
+    NEED_LIC=0
     if [ -f "$BUNDLE_DIR/forenyx.lic" ]; then
         if cp -f "$BUNDLE_DIR/forenyx.lic" "$FORENYX_ROOT/forenyx.lic.tmp" \
            && chmod 600 "$FORENYX_ROOT/forenyx.lic.tmp" \
            && mv -f "$FORENYX_ROOT/forenyx.lic.tmp" "$FORENYX_ROOT/forenyx.lic"; then
-            echo -e "  - ${GREEN}✓ 已安装授权文件 $FORENYX_ROOT/forenyx.lic${NC}"
+            echo -e "  - ${GREEN}✓ 已安装随包附带的授权文件${NC}"
         else
             rm -f "$FORENYX_ROOT/forenyx.lic.tmp"
-            echo -e "${RED}❌ 授权文件写入失败: $FORENYX_ROOT/forenyx.lic${NC}"
-            echo -e "${YELLOW}   请检查磁盘空间与目录权限后重装。离线机器缺少该文件将无法启动。${NC}"
+            echo -e "${RED}❌ 随包附带的授权文件写入失败${NC}"
+            echo -e "${YELLOW}   请检查磁盘空间与目录权限后重装。${NC}"
             exit 1
         fi
     elif [ -f "$FORENYX_ROOT/forenyx.lic" ]; then
-        # 重装/升级场景：包里没带，但机器上已经有一份（上次安装或心跳留下的）。
+        # 重装/升级场景：包里没带，但机器上已经有一份（上次导入、安装或心跳留下的）。
         # 保留它，别把能用的机器装成不能用的。
-        echo -e "  - ${CYAN}ℹ 离线包未附带授权文件，沿用本机已有的 forenyx.lic${NC}"
+        echo -e "  - ${CYAN}ℹ 沿用本机已有的授权文件${NC}"
     else
-        echo -e "${YELLOW}⚠ 离线包内没有授权文件（forenyx.lic），本机也没有。${NC}"
-        echo -e "${YELLOW}   安装可以完成，但 ${AGENT_NAME} 启动时会因缺少授权而退出。${NC}"
-        echo -e "${YELLOW}   请把安装目录下 forenyx-hostid.sh 的输出发给管理员换取授权文件，${NC}"
-        echo -e "${YELLOW}   拿到后放到 $FORENYX_ROOT/forenyx.lic（权限 600）即可。${NC}"
+        NEED_LIC=1
     fi
 else
 
 # License Verification
 if [ -z "$USER_LICENSE" ] && [ -f "$FORENYX_ROOT/.env" ]; then
-    USER_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_ROOT/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
+    USER_LICENSE=$(env_get FORENYX_LICENSE_KEY "$FORENYX_ROOT/.env")
 fi
 
 if [ -z "$USER_LICENSE" ]; then
@@ -621,7 +743,7 @@ if [ -n "$TARGET_TAG" ]; then
         echo -e "${YELLOW}   version.json 声明的版本尚未发布附件，改用服务端提供的地址。${NC}"
         DOWNLOAD_URL="$SERVER_URL"
     elif [ -n "$RELEASE_TAG" ]; then
-        echo -e "  - ${YELLOW}注意：本次安装的是指定版本 $TARGET_TAG，不是云端最新版。${NC}"
+        echo -e "  - ${YELLOW}注意：本次安装的是指定版本 ${TARGET_TAG}，不是云端最新版。${NC}"
         echo -e "    ${YELLOW}启动时仍会提示有新版本；执行 ${AGENT_NAME} update 会升回最新。${NC}"
     fi
 else
@@ -682,6 +804,13 @@ rm -rf "$BIN_DIR/skills"
 rm -rf "$LIBEXEC_DIR/skills"
 # Initialize Global Env Config
 GLOBAL_ENV_FILE="$FORENYX_ROOT/.env"
+# 授权码这一行。只有「离线安装且未带 --license」时为空（在线分支在授权校验之前就
+# 拒绝了空授权码）：此时不写空的 FORENYX_LICENSE_KEY=，授权码由客户端从导入的授权文件里取。
+if [ -n "$USER_LICENSE" ]; then
+    LICENSE_LINE="FORENYX_LICENSE_KEY=$USER_LICENSE"
+else
+    LICENSE_LINE="# FORENYX_LICENSE_KEY 未设置：授权码取自导入的授权文件（$AGENT_NAME license import）"
+fi
 if [ ! -f "$GLOBAL_ENV_FILE" ]; then
     echo -e "  - Initializing global user configuration file ~/.forenyx/.env..."
     cat << EOF > "$GLOBAL_ENV_FILE"
@@ -699,7 +828,7 @@ if [ ! -f "$GLOBAL_ENV_FILE" ]; then
 # CLIENT_ID 在首次安装时算出并与服务端绑定：改了或删了会导致心跳返回 403
 # 「跨设备冒用」，届时需要联系管理员解绑才能恢复。
 # -----------------------------------------------------------------------------
-FORENYX_LICENSE_KEY=$USER_LICENSE
+$LICENSE_LINE
 FORENYX_CLIENT_ID=$CLIENT_ID
 
 # -----------------------------------------------------------------------------
@@ -728,36 +857,68 @@ else
     #
     # 早先写成"缺失才补"是为了不覆盖用户手工改过的其它配置——但那只该保护
     # OPENAI_API_KEY 之类，不该保护授权码：授权码的权威来源就是本次命令行入参。
-    if grep -q "^FORENYX_LICENSE_KEY=" "$GLOBAL_ENV_FILE"; then
-        OLD_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$GLOBAL_ENV_FILE" | head -1 | cut -d'=' -f2- | tr -d '[:space:]"'"'"'')
+    #
+    # 离线安装未带 --license：删掉旧授权码。授权码改由导入的授权文件提供；留着旧码，
+    # 客户端会优先拿它发心跳，与新导入的授权文件不一致时服务端返回 403。删除放在这里
+    # （解包与工具安装都已成功之后），中途失败不会先丢掉旧凭据。
+    #
+    # 匹配允许行首空白、删除所有匹配行：客户端读 .env 时先去掉行首空白再取第一个匹配
+    # （license-guard.ts 的 readEnvValue），手改出的缩进行或重复行若漏删，客户端照样读到旧码。
+    if [ -z "$USER_LICENSE" ]; then
+        if env_has FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE"; then
+            echo -e "  - 未提供授权码，移除 ~/.forenyx/.env 中原有的授权码（改由导入的授权文件提供）"
+            env_del FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE" || exit 1
+        fi
+    elif env_has FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE"; then
+        # 按客户端的读法取「现在生效的旧码」（第一个匹配行，允许缩进与引号），
+        # 与它比较；不同就改写第一行、删掉其余匹配行，见 env_set。
+        OLD_LICENSE=$(env_get FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE")
         if [ "$OLD_LICENSE" != "$USER_LICENSE" ]; then
-            echo -e "  - 授权码已变更，更新 ~/.forenyx/.env（$OLD_LICENSE → $USER_LICENSE）"
-            # 用 | 作分隔符：授权码不含 |，而 / 在某些环境变量值里会出现
-            sed -i.bak "s|^FORENYX_LICENSE_KEY=.*|FORENYX_LICENSE_KEY=$USER_LICENSE|" "$GLOBAL_ENV_FILE" \
-                && rm -f "$GLOBAL_ENV_FILE.bak"
+            echo -e "  - 授权码已变更，更新 ~/.forenyx/.env（${OLD_LICENSE} → ${USER_LICENSE}）"
+            env_set FORENYX_LICENSE_KEY "$USER_LICENSE" "$GLOBAL_ENV_FILE" || exit 1
         fi
     else
         echo -e "  - Saving license key to ~/.forenyx/.env..."
-        echo "FORENYX_LICENSE_KEY=$USER_LICENSE" >> "$GLOBAL_ENV_FILE"
+        env_set FORENYX_LICENSE_KEY "$USER_LICENSE" "$GLOBAL_ENV_FILE" || exit 1
     fi
 
-    # client_id 相反：**存在就绝不能改**。它在首次安装时算出并与服务端绑定，
+    # client_id 相反：**有值就绝不能改**。它在首次安装时算出并与服务端绑定，
     # 重算会得到不同的值（machine-id 或 $USER 变化都会），导致心跳 403「跨设备冒用」。
-    if ! grep -q "^FORENYX_CLIENT_ID=" "$GLOBAL_ENV_FILE"; then
-        echo "FORENYX_CLIENT_ID=$CLIENT_ID" >> "$GLOBAL_ENV_FILE"
+    #
+    # 但「有这一行」不等于「有值」：只看行在不在的话，残留的 `FORENYX_CLIENT_ID=`
+    # 空行会让重装永远补不回设备标识，而客户端与 license import 遇到缺设备标识时给出
+    # 的恢复办法正是「重新运行安装脚本」。所以按客户端的读法判断（允许行首空白、取第
+    # 一个匹配、去引号与空白）：为空或缺失才写入本次算出的值，并先删掉那些空行。
+    EXISTING_CID=$(env_get FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE")
+    if [ -z "$EXISTING_CID" ]; then
+        if env_has FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE"; then
+            echo -e "  - ~/.forenyx/.env 中的设备标识为空，按本机重新写入"
+            env_del FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE" || exit 1
+        fi
+        env_set FORENYX_CLIENT_ID "$CLIENT_ID" "$GLOBAL_ENV_FILE" || exit 1
     fi
 fi
 
 # wrapper 靠这个标记跳过版本检查与在线更新。离线机器上那些 curl 只会白等超时，
 # 还会把"连不上更新服务器"这种正常状态报成异常。
+#
+# 已有这一行但不是 1（手改过，或旧版本留下的 0）时要改成 1：客户端是否启动会话内
+# 复查只看它是否恰为 1，不规范化的话离线机器会每 5 分钟发一次必失败的心跳。
+#
+# 已有就把**每一行**都改写成不缩进的 FORENYX_OFFLINE=1，不能因为「已经有一行 =1」就
+# 跳过：客户端去掉行首空白后取第一个匹配，前面若还有一行 =0 就读到 0；而 wrapper 判断
+# 离线用的是行首匹配，缩进行它认不出。改写成统一格式两边都能读对。
 if [ "$OFFLINE_MODE" = "1" ]; then
-    if ! grep -q "^FORENYX_OFFLINE=" "$GLOBAL_ENV_FILE"; then
-        echo "FORENYX_OFFLINE=1" >> "$GLOBAL_ENV_FILE"
+    if env_has FORENYX_OFFLINE "$GLOBAL_ENV_FILE"; then
+        env_set FORENYX_OFFLINE 1 "$GLOBAL_ENV_FILE" || exit 1
+    else
+        env_set FORENYX_OFFLINE 1 "$GLOBAL_ENV_FILE" || exit 1
     fi
 else
-    # 从离线转回在线安装时要清掉，否则更新功能会一直被禁用
-    sed -i.bak '/^FORENYX_OFFLINE=/d' "$GLOBAL_ENV_FILE" 2>/dev/null || true
-    rm -f "$GLOBAL_ENV_FILE.bak"
+    # 从离线转回在线安装时要清掉，否则更新功能会一直被禁用。
+    # 允许行首空白，与上面离线分支一致：客户端读 .env 时先去掉行首空白，手改出的缩进行
+    # 若漏删，客户端仍会认为是离线部署（不启动会话内复查）。
+    env_del FORENYX_OFFLINE "$GLOBAL_ENV_FILE" || exit 1
 fi
 
 # 校验：安装脚本写的 AGENT_NAME 与二进制自带的 piConfig.agentName 必须一致。
@@ -788,6 +949,10 @@ cat << EOF > "$WRAPPER_FILE"
 
 AGENT_NAME="$AGENT_NAME"
 EOF
+
+# 读 .env 的函数与安装器共用同一份（declare 原样输出），规则见 ENV_PL 上方的说明。
+declare -p ENV_PL >> "$WRAPPER_FILE"
+declare -f env_selftest env_get env_has >> "$WRAPPER_FILE"
 
 cat << 'EOF' >> "$WRAPPER_FILE"
 # 机器级：授权文件与心跳缓存，所有智能体共用。license-guard.ts 里写死了这个
@@ -823,14 +988,29 @@ APP_DISPLAY_NAME="$(piconfig_field displayName)"
 APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-ForeNyx CLI}"
 
 # 离线部署标记。由安装脚本 --offline 写入 .env，用于跳过所有联网检查。
+# 无法判断（perl 自检失败，或 .env 缺失、不可读、读取失败）时 OFFLINE_UNKNOWN=1，各入口据此停止。
+# 不能只看 command -v：perl 存在但执行失败时，$(...) 会把错误吞成空值，被误判为在线。
+# .env 缺失或不可读时 env_get 会返回成功的空值，不能据此判为在线，所以先单独检查文件。
 IS_OFFLINE=0
-if [ -f "$FORENYX_ROOT/.env" ] && grep -q "^FORENYX_OFFLINE=1" "$FORENYX_ROOT/.env" 2>/dev/null; then
-    IS_OFFLINE=1
+OFFLINE_UNKNOWN=0
+if ! env_selftest; then
+    OFFLINE_UNKNOWN=1
+elif [ ! -f "$FORENYX_ROOT/.env" ] || [ ! -r "$FORENYX_ROOT/.env" ]; then
+    OFFLINE_UNKNOWN=1
+elif OFFLINE_VAL=$(env_get FORENYX_OFFLINE "$FORENYX_ROOT/.env"); then
+    if [ "$OFFLINE_VAL" = "1" ]; then IS_OFFLINE=1; fi
+else
+    OFFLINE_UNKNOWN=1
 fi
 
 ## Command interceptors
 case "$1" in
     --version|-v)
+        # 读不了 .env 就无法判断是否离线，不能按在线处理去访问网络
+        if [ "$OFFLINE_UNKNOWN" = "1" ]; then
+            echo "❌ 无法判断离线状态（perl 自检失败，或 $FORENYX_ROOT/.env 缺失、不可读、读取失败）。请检查 perl；若 .env 缺失或不可读，请重新运行安装脚本恢复。" >&2
+            exit 1
+        fi
         if [ -f "$LIBEXEC_DIR/package.json" ]; then
             CURRENT_VERSION=$(piconfig_field version)
         else
@@ -867,6 +1047,10 @@ case "$1" in
         exit 0
         ;;
     update)
+        if [ "$OFFLINE_UNKNOWN" = "1" ]; then
+            echo "❌ 无法判断离线状态（perl 自检失败，或 $FORENYX_ROOT/.env 缺失、不可读、读取失败）。请检查 perl；若 .env 缺失或不可读，请重新运行安装脚本恢复。" >&2
+            exit 1
+        fi
         echo -e "\033[0;36m=====================================================\033[0m"
         echo -e "\033[0;36m\033[1m        Updating $APP_DISPLAY_NAME — $AGENT_NAME\033[0m"
         echo -e "\033[0;36m=====================================================\033[0m"
@@ -915,7 +1099,7 @@ case "$1" in
         # Load local license key if exists to perform silent upgrade
         LOCAL_LICENSE=""
         if [ -f "$FORENYX_ROOT/.env" ]; then
-            LOCAL_LICENSE=$(grep "^FORENYX_LICENSE_KEY=" "$FORENYX_ROOT/.env" | cut -d'=' -f2 | tr -d '[:space:]' | tr -d '"' | tr -d "'")
+            LOCAL_LICENSE=$(env_get FORENYX_LICENSE_KEY "$FORENYX_ROOT/.env")
         fi
 
         if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash -s -- --license "$LOCAL_LICENSE"; then
@@ -965,7 +1149,8 @@ case "$1" in
             read -r DEL_LIC
             if [ "$DEL_LIC" = "y" ] || [ "$DEL_LIC" = "Y" ]; then
                 rm -f "$FORENYX_ROOT/forenyx.lic" "$FORENYX_ROOT/.env" \
-                      "$FORENYX_ROOT/.heartbeat_cache" "$FORENYX_ROOT/.offline_runs"
+                      "$FORENYX_ROOT/.heartbeat_cache" "$FORENYX_ROOT/.offline_runs" \
+                      "$FORENYX_ROOT/.offline_batch"
                 echo -e "  - Cleared license data."
             else
                 echo -e "  - Kept license data."
@@ -998,6 +1183,17 @@ case "$1" in
         exit 0
         ;;
 esac
+
+# 普通启动也必须知道是否离线：缺 perl 时读不了 .env，IS_OFFLINE 只会是 0，
+# 上游会去做版本检查或下载工具。无法判断就直接停止，不按在线处理。
+# 卸载与 --version/update 已在上面的 case 里处理并退出，不受这里影响。
+# `license import` 放行的是这道离线判断：cli.ts 在授权校验之前执行并退出，不经过离线逻辑。
+# 注意：普通授权（非 admin）导入仍要读取 .env 中的 client_id，缺失时 CLI 会拒绝并提示重新安装。
+# 放行只是不让这道判断拦住离线用户拿到 .lic 后无法导入。--help 暂不放行，见清单记录。
+if [ "$OFFLINE_UNKNOWN" = "1" ] && ! { [ "${1:-}" = "license" ] && [ "${2:-}" = "import" ]; }; then
+    echo "❌ 无法判断离线状态（perl 自检失败，或 .env 缺失、不可读、读取失败），已停止运行。请检查 perl；若 .env 缺失或不可读，请重新运行安装脚本恢复。" >&2
+    exit 1
+fi
 
 # Execute actual compiled binary
 export PI_PACKAGE_DIR="$LIBEXEC_DIR"
@@ -1087,3 +1283,28 @@ fi
 echo -e "To uninstall ${AGENT_NAME}, simply run:"
 echo -e "  ${CYAN}${BOLD}$AGENT_NAME uninstall${NC}"
 echo -e "====================================================="
+
+# 本机还没有授权文件：当场打印 hostid，省掉客户再找脚本、再跑一遍这一步。
+# 放在最后，是为了让客户要复制的那一行出现在屏幕最下方，不被安装日志淹没。
+if [ "${NEED_LIC:-0}" = "1" ]; then
+    echo -e "${YELLOW}${BOLD}本机尚未取得授权，${AGENT_NAME} 现在还不能启动。${NC}"
+    echo -e "请按下面「部署信息」末尾的提示把内容发给管理员，换取授权文件，然后执行："
+    echo -e "  ${CYAN}${BOLD}${AGENT_NAME} license import <授权文件>${NC}"
+    echo -e "（换了账号或换了机器，都需要在那个账号、那台机器上重新获取。）"
+    HOSTID_TOOL="$FORENYX_ROOT/forenyx-hostid.sh"
+    if [ -x "$HOSTID_TOOL" ]; then
+        # 以当前用户运行：client_id 由 machine-id 与 $USER 算出，必须与写入 .env 的一致。
+        # 重装时 .env 沿用首次安装算出的值，而 hostid 每次重算；两者若不同（例如中途
+        # 改过 machine-id），按 hostid 签出的授权文件在本机永远导不进去，现场极难定位。
+        # 读法与客户端一致：允许行首空白、取第一个匹配、去掉引号与空白
+        ENV_CID=$(env_get FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE")
+        TOOL_CID=$(bash "$HOSTID_TOOL" --raw 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$ENV_CID" ] && [ -n "$TOOL_CID" ] && [ "$ENV_CID" != "$TOOL_CID" ]; then
+            echo -e "${RED}⚠ 本机设备标识与安装记录不一致（记录 ${ENV_CID:0:8}…，当前 ${TOOL_CID:0:8}…）。${NC}"
+            echo -e "${YELLOW}   按下面的信息签发的授权文件将无法导入。请把这两行一并发给管理员处理。${NC}"
+        fi
+        bash "$HOSTID_TOOL" || echo -e "${YELLOW}⚠ 部署信息采集失败，请联系管理员。${NC}"
+    else
+        echo -e "${YELLOW}⚠ 离线包内缺少 forenyx-hostid.sh，无法采集部署信息。请向管理员索取该工具。${NC}"
+    fi
+fi
