@@ -137,7 +137,8 @@ elif [ -f "$FORENYX_ROOT/forenyx.lic" ] || [ -f "$FORENYX_ROOT/.env" ]; then
     if [ "$DEL_LIC" = "y" ] || [ "$DEL_LIC" = "Y" ]; then
         rm -f "$FORENYX_ROOT/forenyx.lic" "$FORENYX_ROOT/.env" \
               "$FORENYX_ROOT/.heartbeat_cache" "$FORENYX_ROOT/.offline_runs" \
-              "$FORENYX_ROOT/.offline_batch" "$FORENYX_ROOT/.license_state"
+              "$FORENYX_ROOT/.offline_batch" "$FORENYX_ROOT/.license_state" \
+              "$FORENYX_ROOT/.heartbeat_probe"
         echo -e "  - Cleared license data."
         rmdir "$FORENYX_ROOT" 2>/dev/null && echo -e "  - Removed empty ~/.forenyx/." || true
     else
