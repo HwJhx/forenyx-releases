@@ -1158,15 +1158,29 @@ case "$1" in
         echo -e "\033[0;31m\033[1m      Uninstalling $APP_DISPLAY_NAME — $AGENT_NAME\033[0m"
         echo -e "\033[0;31m=====================================================\033[0m"
         
+        # y/n 问题只接受 y/n（yes/no，大小写均可）或回车取默认，其他输入提示后重问。
+        # 原先只认 y：「保留数据？」手滑输错一个字母就当成「不保留」，整个智能体目录被删。
+        # 读到输入结束（没有终端、管道已空）时按默认处理，不会死循环。
+        confirm_yn() {
+            local __var="$1" __prompt="$2" __default="$3" __reply
+            while :; do
+                echo -en "$__prompt"
+                if ! read -r __reply; then __reply=""; echo; fi
+                case "$(printf '%s' "${__reply:-$__default}" | tr 'A-Z' 'a-z')" in
+                    y|yes) printf -v "$__var" '%s' y; return 0 ;;
+                    n|no) printf -v "$__var" '%s' n; return 0 ;;
+                    *) echo -e "\033[0;33m  请输入 y 或 n（直接回车为 ${__default}）。\033[0m" ;;
+                esac
+            done
+        }
+
         echo -e "  Uninstalling agent: \033[1m$AGENT_NAME\033[0m (~/.forenyx/$AGENT_NAME/)"
         echo -e "\033[0;33mWould you like to keep your custom skills and configuration data?\033[0m"
         echo -e "  Skills path: ~/.forenyx/$AGENT_NAME/agent/skills/custom/"
         echo -e "  Configurations path: ~/.forenyx/$AGENT_NAME/agent/ (settings.json, auth.json, sessions/)"
-        echo -en "Keep these files? (y/n, default: y): "
-        read -r KEEP_DATA
-        KEEP_DATA=${KEEP_DATA:-y}
+        confirm_yn KEEP_DATA "Keep these files? (y/n, default: y): " y
         
-        if [ "$KEEP_DATA" = "y" ] || [ "$KEEP_DATA" = "Y" ]; then
+        if [ "$KEEP_DATA" = "y" ]; then
             echo -e "\033[0;34mKeeping configurations and skills. Cleaning binaries...\033[0m"
             rm -rf "$BIN_DIR" "$LIBEXEC_DIR"
             echo -e "  - Cleared binaries and wrappers for $AGENT_NAME."
@@ -1190,9 +1204,8 @@ case "$1" in
             echo -e "\033[0;33m本机已无其它智能体。是否一并删除授权文件与授权配置？\033[0m"
             echo -e "  ~/.forenyx/forenyx.lic, ~/.forenyx/.env"
             echo -e "  \033[0;33m删除后重装需要重新激活（内网机器需重新申请 .lic）。\033[0m"
-            echo -en "Delete license data? (y/n, default: n): "
-            read -r DEL_LIC
-            if [ "$DEL_LIC" = "y" ] || [ "$DEL_LIC" = "Y" ]; then
+            confirm_yn DEL_LIC "Delete license data? (y/n, default: n): " n
+            if [ "$DEL_LIC" = "y" ]; then
                 rm -f "$FORENYX_ROOT/forenyx.lic" "$FORENYX_ROOT/.env" \
                       "$FORENYX_ROOT/.heartbeat_cache" "$FORENYX_ROOT/.offline_runs" \
                       "$FORENYX_ROOT/.offline_batch" "$FORENYX_ROOT/.heartbeat_probe" \

@@ -46,17 +46,40 @@ BIN_DIR="$AGENT_HOME/bin"
 LIBEXEC_DIR="$AGENT_HOME/libexec"
 
 # 交互输入统一走这里。`curl … | bash` 时 stdin 是脚本自己，直接 read 会把脚本
-# 正文读进变量，所以优先用 /dev/tty；没有 tty 的场合（CI、容器）退回 stdin。
+# 正文读进变量，所以优先用 /dev/tty；没有 tty、脚本从文件执行的场合（CI、容器）退回 stdin；
+# 没有 tty 而脚本又来自 stdin 时不读，按默认值。
 ask() {
     local __var="$1" __prompt="$2" __reply=""
     if [ -c /dev/tty ] && { : < /dev/tty; } 2>/dev/null; then
         printf "%b" "$__prompt" > /dev/tty
         IFS= read -r __reply < /dev/tty || __reply=""
+    elif { [ -z "${BASH_SOURCE[0]:-}" ] || [ "${BASH_SOURCE[0]}" = main ]; } \
+         && [ -z "${BASH_EXECUTION_STRING+x}" ]; then
+        # 没有终端，而且脚本本身是经管道从 stdin 读进来的（curl … | bash；这时 BASH_SOURCE[0]
+        # 在 bash 3.2 为空、在 bash 5 为 main）。bash -c 执行时 BASH_SOURCE[0] 在 bash 3.2 下
+        # 也为空，但会设置 BASH_EXECUTION_STRING，stdin 可以照常读，靠它区分。stdin 里剩下的
+        # 是脚本正文，读它会把正文当成答案，还会吞掉后面的卸载步骤。不读，按默认值处理。
+        printf "%b（没有终端，按默认）\n" "$__prompt"
     else
         printf "%b" "$__prompt"
         IFS= read -r __reply || __reply=""
     fi
     printf -v "$__var" '%s' "$__reply"
+}
+
+# y/n 问题只接受 y/n（yes/no，大小写均可）或回车取默认，其他输入提示后重问。
+# 原先只认 y：「保留数据？」手滑输错一个字母就当成「不保留」，整个智能体目录被删。
+# ask 读到输入结束时返回空串，按默认处理，不会死循环。
+ask_yn() {
+    local __var="$1" __prompt="$2" __default="$3" __r=""
+    while :; do
+        ask __r "$__prompt"
+        case "$(printf '%s' "${__r:-$__default}" | tr 'A-Z' 'a-z')" in
+            y|yes) printf -v "$__var" '%s' y; return 0 ;;
+            n|no) printf -v "$__var" '%s' n; return 0 ;;
+            *) echo -e "${YELLOW}  请输入 y 或 n（直接回车为 ${__default}）。${NC}" ;;
+        esac
+    done
 }
 
 echo -e "${RED}${BOLD}=====================================================${NC}"
@@ -74,10 +97,9 @@ fi
 echo -e "${YELLOW}Would you like to keep your custom skills and configuration data?${NC}"
 echo -e "  Skills path:         ~/.forenyx/$AGENT_NAME/agent/skills/custom/"
 echo -e "  Configurations path: ~/.forenyx/$AGENT_NAME/agent/ (settings.json, auth.json, sessions/)"
-ask KEEP_DATA "Keep these files? (y/n, default: y): "
-KEEP_DATA=${KEEP_DATA:-y}
+ask_yn KEEP_DATA "Keep these files? (y/n, default: y): " y
 
-if [ "$KEEP_DATA" = "y" ] || [ "$KEEP_DATA" = "Y" ]; then
+if [ "$KEEP_DATA" = "y" ]; then
     echo -e "${BLUE}Keeping configurations and skills. Cleaning binaries...${NC}"
     rm -rf "$BIN_DIR" "$LIBEXEC_DIR"
     echo -e "  - Cleared binaries and wrappers (kept ~/.forenyx/$AGENT_NAME/agent/)."
@@ -133,8 +155,8 @@ elif [ -f "$FORENYX_ROOT/forenyx.lic" ] || [ -f "$FORENYX_ROOT/.env" ]; then
     echo -e "${YELLOW}本机已无其它智能体。是否一并删除授权文件与授权配置？${NC}"
     echo -e "  ~/.forenyx/forenyx.lic, ~/.forenyx/.env"
     echo -e "${YELLOW}  删除后重装需要重新激活；内网机器需要重新向管理员申请 .lic。${NC}"
-    ask DEL_LIC "Delete license data? (y/n, default: n): "
-    if [ "$DEL_LIC" = "y" ] || [ "$DEL_LIC" = "Y" ]; then
+    ask_yn DEL_LIC "Delete license data? (y/n, default: n): " n
+    if [ "$DEL_LIC" = "y" ]; then
         rm -f "$FORENYX_ROOT/forenyx.lic" "$FORENYX_ROOT/.env" \
               "$FORENYX_ROOT/.heartbeat_cache" "$FORENYX_ROOT/.offline_runs" \
               "$FORENYX_ROOT/.offline_batch" "$FORENYX_ROOT/.license_state" \
