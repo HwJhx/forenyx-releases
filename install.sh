@@ -190,6 +190,423 @@ env_del() {
     env_commit "$file" "$tmp"
 }
 
+# >>> ROOT_FN_BEGIN
+# 安装根目录（默认 ~/.forenyx，可用 --prefix 指定）的查找、识别、所有者与权限、上级目录、
+# shell 配置记录。设计见 docs/claude/install-prefix-plan.md §3.2–3.5、§3.7、§3.8。
+#
+# 本段在 install-release.sh、uninstall-release.sh、install-python-deps.sh 里各有一份
+# **逐字相同**的副本——它们都以单文件分发（curl | bash 或随包），没法 source 公共文件。
+# 由 scripts/check-script-copies.mjs 按标记行核对，改这里要同步三处。安装器生成的
+# wrapper 用 declare -p / declare -f 原样带上。**勿删标记行。**
+#
+# 兼容 macOS 自带的 bash 3.2：不用关联数组、不用 ${var,,}。
+# 调用前需已设好 AGENT_NAME（PATH 记录按智能体区分）。
+
+FNX_RC_FILES=".bashrc .bash_profile .zshrc .cshrc .tcshrc"
+FNX_PATH_MARK_PREFIX="# Forenyx AI CLI PATH configuration"
+FNX_HOME_MARK="# Forenyx AI root"
+FNX_ROOT_MARKER=".forenyx_root"
+
+# perl 部分。安装器本来就依赖 perl（ENV_PL），这里不再引入别的工具。
+#   realpath：绝对路径 → 物理路径（逐级解析符号链接与 ..；不存在的部分按字面拼接）
+#   rc_homes：列出配置文件里安装器写下的 FORENYX_HOME 记录的值
+#   rc_edit ：按标记增删 PATH 行与 FORENYX_HOME 行，结果写到标准输出
+FNX_PL='
+use strict; use warnings;
+my $m = $ENV{FNXMODE} // "";
+if ($m eq "realpath") {
+    require Cwd;
+    my $p = $ENV{FNXPATH} // ""; exit 2 unless $p =~ m{^/};
+    my $cur = "/";
+    for my $c (split m{/}, $p) {
+        next if $c eq "" || $c eq ".";
+        if ($c eq "..") { $cur =~ s{/[^/]*\z}{}; $cur = "/" if $cur eq ""; next; }
+        my $nxt = $cur eq "/" ? "/$c" : "$cur/$c";
+        if (-e $nxt) { my $r = Cwd::realpath($nxt); $cur = defined $r ? $r : $nxt; }
+        else { $cur = $nxt; }
+    }
+    print "$cur\n"; exit 0;
+}
+my $hmark = $ENV{FNXHOMEMARK}; my $pmark = $ENV{FNXPATHMARK};
+my $agent = $ENV{FNXAGENT} // "";
+sub trimws { my $s = shift; $s =~ s/^\s+//; $s =~ s/\s+\z//; return $s; }
+sub homeval {
+    my $l = trimws(shift);
+    return $2 if $l =~ /^export\s+FORENYX_HOME=(["\x27]?)(.*?)\1$/;
+    return $2 if $l =~ /^setenv\s+FORENYX_HOME\s+(["\x27]?)(.*?)\1$/;
+    return undef;
+}
+sub is_agent_path {
+    my $l = shift;
+    return 0 if $agent eq "";
+    return ($l =~ /PATH/ && index($l, "/$agent/bin") >= 0) ? 1 : 0;
+}
+local $/; my $c = <STDIN>; $c = "" unless defined $c;
+my @e = split /\n/, $c, -1; my $nl = 0;
+if (@e && $e[-1] eq "") { pop @e; $nl = 1; }
+if ($m eq "rc_homes") {
+    for (my $i = 0; $i < @e; $i++) {
+        next unless trimws($e[$i]) eq $hmark && $i + 1 < @e;
+        my $v = homeval($e[$i + 1]); print "$v\n" if defined $v;
+    }
+    exit 0;
+}
+exit 2 unless $m eq "rc_edit";
+my $pmode = $ENV{FNXPATHMODE} // "keep";      # keep | del | set
+my $pline = $ENV{FNXPATHLINE} // "";
+my $padd  = $ENV{FNXPATHADD} // "0";
+my $hdelall = $ENV{FNXHOMEDELALL} // "0";
+my %hdel = map { $_ => 1 } grep { $_ ne "" } split /\n/, ($ENV{FNXHOMEDEL} // "");
+my $hline = $ENV{FNXHOMELINE} // "";
+my $hadd  = $ENV{FNXHOMEADD} // "0";
+my $pmark_agent = "$pmark ($agent)";
+my @out; my $pfound = 0; my $hkept = 0;
+sub drop_blank_before { pop @out if @out && $out[-1] =~ /^\s*$/; }
+for (my $i = 0; $i < @e; $i++) {
+    my $t = trimws($e[$i]);
+    if ($agent ne "" && $t eq $pmark_agent) {
+        my $pair = ($i + 1 < @e && is_agent_path($e[$i + 1])) ? 1 : 0;
+        if ($pmode eq "del") { drop_blank_before(); $i++ if $pair; next; }
+        if ($pmode eq "set") {
+            if ($pfound) { drop_blank_before(); $i++ if $pair; next; }
+            push @out, $e[$i], $pline; $pfound = 1; $i++ if $pair; next;
+        }
+        push @out, $e[$i]; next;
+    }
+    if ($pmode ne "keep" && is_agent_path($e[$i]) && index($e[$i], "forenyx/$agent/bin") >= 0) {
+        # 0.4.9 及以前没有配套标记、或标记被手工删掉的旧 PATH 行
+        if ($pmode eq "set" && !$pfound) { push @out, $pmark_agent, $pline; $pfound = 1; }
+        next;
+    }
+    if ($t eq $hmark && $i + 1 < @e && defined homeval($e[$i + 1])) {
+        my $v = homeval($e[$i + 1]);
+        if ($hdelall eq "1" || $hdel{$v}) { drop_blank_before(); $i++; next; }
+        if ($hline ne "") {
+            if ($hkept) { drop_blank_before(); $i++; next; }
+            push @out, $e[$i], $hline; $hkept = 1; $i++; next;
+        }
+        push @out, $e[$i], $e[$i + 1]; $hkept = 1; $i++; next;
+    }
+    push @out, $e[$i];
+}
+if ($pmode eq "set" && $padd eq "1" && !$pfound) { push @out, "", $pmark_agent, $pline; $nl = 1; }
+if ($hline ne "" && $hadd eq "1" && !$hkept) { push @out, "", $hmark, $hline; $nl = 1; }
+if (@out) { my $o = join("\n", @out); $o .= "\n" if $nl; print $o; }
+'
+
+# ~ 展开、相对路径转绝对，再取物理路径。参数为空时输出空。
+fnx_realpath() {
+    local p="$1"
+    [ -n "$p" ] || return 0
+    case "$p" in
+        "~") p="$HOME" ;;
+        "~/"*) p="$HOME/${p#\~/}" ;;
+    esac
+    case "$p" in
+        /*) ;;
+        *) p="$PWD/$p" ;;
+    esac
+    FNXMODE=realpath FNXPATH="$p" perl -e "$FNX_PL"
+}
+
+fnx_my_uid() { id -u; }
+fnx_uid_of() { ls -ldn "$1" 2>/dev/null | awk '{print $3}'; }
+fnx_mode_of() { ls -ld "$1" 2>/dev/null | awk '{print substr($1, 1, 10)}'; }
+
+# 有没有额外 ACL。macOS 上 ls -ld 的第 11 位遇到扩展属性显示 @，会盖住 ACL 的 +，
+# 所以用 ls -lde 看有没有 ACL 条目；Linux 看第 11 位是不是 +。
+fnx_has_acl() {
+    if [ "$(uname)" = "Darwin" ]; then
+        [ -n "$(ls -lde "$1" 2>/dev/null | sed -n '2p')" ]
+    else
+        [ "$(ls -ld "$1" 2>/dev/null | awk '{print substr($1, 11, 1)}')" = "+" ]
+    fi
+}
+
+# 清除额外 ACL（Linux 的 -k 清目录默认 ACL，只用 -b 会留下，新文件仍会继承）。
+# 清除后仍有 ACL 返回 1。
+fnx_clear_acl() {
+    fnx_has_acl "$1" || return 0
+    if [ "$(uname)" = "Darwin" ]; then
+        chmod -N "$1" 2>/dev/null || true
+    elif command -v setfacl >/dev/null 2>&1; then
+        setfacl -b -k "$1" 2>/dev/null || true
+    fi
+    ! fnx_has_acl "$1"
+}
+
+# 是不是 Forenyx 安装根目录：有标记文件；或者是 0.4.9 及以前的旧根目录（没有标记），
+# 认得出的痕迹只取本产品特有的——裸 .env 太常见，必须带有 FORENYX_CLIENT_ID。
+fnx_is_root() {
+    local d="$1" a
+    [ -d "$d" ] || return 1
+    [ -f "$d/$FNX_ROOT_MARKER" ] && return 0
+    [ -f "$d/forenyx.lic" ] && return 0
+    [ -f "$d/forenyx-hostid.sh" ] && return 0
+    [ -f "$d/.env" ] && grep -q 'FORENYX_CLIENT_ID=' "$d/.env" 2>/dev/null && return 0
+    for a in "$d"/*/libexec/package.json; do
+        [ -f "$a" ] && grep -q '"piConfig"' "$a" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+# 标记文件里的某个字段（key=value，取第一个）。
+fnx_marker_get() {
+    [ -f "$1/$FNX_ROOT_MARKER" ] || return 0
+    sed -n "s/^$2=//p" "$1/$FNX_ROOT_MARKER" 2>/dev/null | head -n 1
+}
+
+# 根目录属于当前账号：目录所有者是自己；已有标记文件的话，它是普通文件（不是符号链接）、
+# 所有者是自己、里面记的 UID 也是自己（§3.3 所有者校验）。只看文本里的 UID 不够：
+# 他人能写进根目录时可以伪造一份标记，连同其中的风险记录。
+fnx_root_mine() {
+    local d="$1" me uid m="$1/$FNX_ROOT_MARKER"
+    me=$(fnx_my_uid)
+    [ "$(fnx_uid_of "$d")" = "$me" ] || return 1
+    if [ -e "$m" ] || [ -L "$m" ]; then
+        [ -L "$m" ] && return 1
+        [ "$(fnx_uid_of "$m")" = "$me" ] || return 1
+    fi
+    uid=$(fnx_marker_get "$d" uid)
+    [ -z "$uid" ] || [ "$uid" = "$me" ]
+}
+
+# 根目录里授权相关的文件（标记、.env、授权文件）已存在却不是「本人的、只有一个链接的
+# 普通文件」时，逐行输出 `ls -ld` 的结果。安装器读写这些文件时会顺着符号链接、硬链接
+# 写到根目录之外；不属于自己的文件改不了权限、内容也可能被换过；目录等非普通文件到
+# 写入时才失败，留下装了一半的状态。所以安装前一律拒绝。
+fnx_sensitive_problems() {
+    local r="$1" f me
+    me=$(fnx_my_uid)
+    for f in "$r/$FNX_ROOT_MARKER" "$r/.env" "$r/forenyx.lic"; do
+        if [ -L "$f" ]; then
+            ls -ld "$f" 2>/dev/null
+        elif [ -e "$f" ]; then
+            if [ ! -f "$f" ] || [ "$(fnx_uid_of "$f")" != "$me" ] \
+                || [ "$(ls -ldn "$f" 2>/dev/null | awk '{print $2}')" != "1" ]; then
+                ls -ld "$f" 2>/dev/null
+            fi
+        fi
+    done
+}
+
+# shell 配置文件是 csh 语法吗
+fnx_rc_is_csh() { case "$1" in *.cshrc|*.tcshrc) return 0 ;; esac; return 1; }
+
+# 各配置文件里安装器写下的 FORENYX_HOME 记录的值，逐行输出。
+fnx_rc_homes() {
+    local f
+    for f in $FNX_RC_FILES; do
+        [ -f "$HOME/$f" ] || continue
+        FNXMODE=rc_homes FNXHOMEMARK="$FNX_HOME_MARK" FNXPATHMARK="$FNX_PATH_MARK_PREFIX" FNXAGENT="" \
+            perl -e "$FNX_PL" < "$HOME/$f"
+    done
+}
+
+# 改一个配置文件。参数：文件，其余按 KEY=VALUE 传给 rc_edit（FNXPATHMODE 等）。
+# 内容不变就不写；写回保留原文件的权限与属主（cat >），写失败保持原样并返回 1。
+fnx_rc_edit() {
+    local f="$1" tmp
+    shift
+    tmp=$(mktemp "${TMPDIR:-/tmp}/forenyx-rc.XXXXXX") || return 1
+    if [ -f "$f" ]; then
+        if ! env "$@" FNXMODE=rc_edit FNXHOMEMARK="$FNX_HOME_MARK" FNXPATHMARK="$FNX_PATH_MARK_PREFIX" \
+            FNXAGENT="$AGENT_NAME" perl -e "$FNX_PL" < "$f" > "$tmp"; then
+            rm -f "$tmp"; echo "读取 $f 失败，未改动" >&2; return 1
+        fi
+        if cmp -s "$f" "$tmp"; then rm -f "$tmp"; return 0; fi
+    else
+        if ! env "$@" FNXMODE=rc_edit FNXHOMEMARK="$FNX_HOME_MARK" FNXPATHMARK="$FNX_PATH_MARK_PREFIX" \
+            FNXAGENT="$AGENT_NAME" perl -e "$FNX_PL" < /dev/null > "$tmp"; then
+            rm -f "$tmp"; return 1
+        fi
+        [ -s "$tmp" ] || { rm -f "$tmp"; return 0; }
+    fi
+    if ! cat "$tmp" > "$f"; then rm -f "$tmp"; echo "写入 $f 失败" >&2; return 1; fi
+    rm -f "$tmp"
+}
+
+# 所有配置文件里删掉本智能体的 PATH 行（卸载用）。
+fnx_rc_remove_path() {
+    local f
+    for f in $FNX_RC_FILES; do
+        [ -f "$HOME/$f" ] || continue
+        fnx_rc_edit "$HOME/$f" FNXPATHMODE=del || true
+    done
+}
+
+# 找本账号已有的根目录。输出变量：
+#   FNX_EXISTING      已有的根目录（去重，换行分隔）
+#   FNX_STALE_VALUES  指向不存在或不是根目录的记录值（环境变量与配置文件，换行分隔）
+#   FNX_FOREIGN       指到了、是根目录、却不属于当前账号的目录（换行分隔）
+# 过期的只提示，不在这里改配置文件。
+fnx_find_roots() {
+    local cands="" v p
+    FNX_EXISTING=""; FNX_STALE_VALUES=""; FNX_FOREIGN=""
+    if [ -n "${FORENYX_HOME:-}" ]; then cands="$FORENYX_HOME"; fi
+    cands="$cands
+$(fnx_rc_homes)
+$HOME/.forenyx"
+    while IFS= read -r v; do
+        [ -n "$v" ] || continue
+        p=$(fnx_realpath "$v")
+        if [ -z "$p" ] || ! fnx_is_root "$p"; then
+            if [ "$v" != "$HOME/.forenyx" ]; then
+                case "
+$FNX_STALE_VALUES
+" in *"
+$v
+"*) ;; *) FNX_STALE_VALUES="${FNX_STALE_VALUES:+$FNX_STALE_VALUES
+}$v" ;; esac
+            fi
+            continue
+        fi
+        if ! fnx_root_mine "$p"; then
+            case "
+$FNX_FOREIGN
+" in *"
+$p
+"*) ;; *) FNX_FOREIGN="${FNX_FOREIGN:+$FNX_FOREIGN
+}$p" ;; esac
+            continue
+        fi
+        case "
+$FNX_EXISTING
+" in *"
+$p
+"*) ;; *) FNX_EXISTING="${FNX_EXISTING:+$FNX_EXISTING
+}$p" ;; esac
+    done <<FNXEOF
+$cands
+FNXEOF
+}
+
+# 有问题的上级目录：从根目录的上一级逐级到 /，每一级须所有者为本人或 root，
+# 且组与其他人不可写（带 ACL 的按可写处理）——设了 sticky 位的除外。
+# 只查已存在的上级（不存在的那几级会由安装器以 umask 077 创建）。
+# 逐行输出「路径|UID|组可写|其他人可写|sticky|ACL」（后四项为 0/1）。
+fnx_parent_risks() {
+    local r="$1" d me uid mode gw ow st acl
+    me=$(fnx_my_uid)
+    d="${r%/*}"; [ -n "$d" ] || d="/"
+    while :; do
+        if [ -d "$d" ]; then
+            uid=$(fnx_uid_of "$d"); mode=$(fnx_mode_of "$d")
+            gw=0; ow=0; st=0; acl=0
+            [ "$(printf '%s' "$mode" | cut -c6)" = "w" ] && gw=1
+            [ "$(printf '%s' "$mode" | cut -c9)" = "w" ] && ow=1
+            case "$(printf '%s' "$mode" | cut -c10)" in t|T) st=1 ;; esac
+            fnx_has_acl "$d" && acl=1
+            if [ "$st" = "0" ] && { [ "$gw" = "1" ] || [ "$ow" = "1" ] || [ "$acl" = "1" ] \
+                || { [ "$uid" != "$me" ] && [ "$uid" != "0" ]; }; }; then
+                printf '%s|%s|%s|%s|%s|%s\n' "$d" "$uid" "$gw" "$ow" "$st" "$acl"
+            elif [ "$st" = "1" ] && [ "$uid" != "$me" ] && [ "$uid" != "0" ]; then
+                # sticky 只挡别人改名删除不属于他的目录项；目录所有者本人仍可以，
+                # 所以由他人所有的上级目录即使有 sticky 也算有问题
+                printf '%s|%s|%s|%s|%s|%s\n' "$d" "$uid" "$gw" "$ow" "$st" "$acl"
+            fi
+        fi
+        [ "$d" = "/" ] && break
+        d="${d%/*}"; [ -n "$d" ] || d="/"
+    done
+}
+
+# 写标记文件：账号、UID、根目录。权限 600。参数：根目录。
+fnx_marker_write() {
+    local r="$1" tmp
+    tmp=$(mktemp "$r/$FNX_ROOT_MARKER.XXXXXX") || return 1
+    {
+        echo "# Forenyx AI 安装根目录标记，请勿删除（docs/claude/install-prefix-plan.md §3.3）"
+        echo "user=${USER:-$(id -un)}"
+        echo "uid=$(fnx_my_uid)"
+        echo "root=$r"
+    } > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$r/$FNX_ROOT_MARKER"
+}
+
+# 上级目录他人可写时提示：他人可以把安装目录改名、再放一个同名目录。
+# 只提示、不拦（2026-10-26 用户决定，替代原先「自定义位置默认拒绝、--allow-shared-parent
+# 放行并记录」的做法，见方案第 9 节决定事项 4）。不改任何东西，总是返回 0。
+fnx_parent_warn() {
+    local r="$1" risks line
+    risks=$(fnx_parent_risks "$r")
+    [ -n "$risks" ] || return 0
+    echo -e "\033[0;33m⚠ 安装目录的上级目录可被他人改名或删除，存在被替换的风险：\033[0m" >&2
+    while IFS='|' read -r line _; do
+        [ -n "$line" ] && echo "    $(ls -ld "$line" 2>/dev/null)" >&2
+    done <<FNXEOF
+$risks
+FNXEOF
+    echo "  继续。建议请管理员处理上述目录：所有者改为本人或 root，并只让所有者能写入（或设 sticky 位）。" >&2
+    return 0
+}
+# 卸载、装依赖用：只找**已有的**根目录，不新建（§3.2 末段）。参数：--prefix 的值（可空）。
+# 找到返回 0，结果在 FNX_LOCATED；没装过返回 2；有冲突返回 1（已打印原因）。
+fnx_locate_existing() {
+    local want="" n
+    FNX_LOCATED=""
+    if [ -n "$1" ]; then
+        want=$(fnx_realpath "$1")
+        [ -n "$want" ] || { echo "❌ 无法解析 --prefix 指定的路径：$1" >&2; return 1; }
+    fi
+    fnx_find_roots
+    if [ -n "$FNX_FOREIGN" ]; then
+        echo "❌ 找到的 Forenyx 安装目录不属于当前账号（$(id -un)），已停止，未做任何改动：" >&2
+        printf '%s\n' "$FNX_FOREIGN" | sed 's|^|     |' >&2
+        return 1
+    fi
+    n=$(printf '%s\n' "$FNX_EXISTING" | grep -c . || true)
+    if [ "$n" -gt 1 ]; then
+        echo "❌ 当前账号有不止一个 Forenyx 安装目录，无法确定用哪一个，已停止：" >&2
+        printf '%s\n' "$FNX_EXISTING" | sed 's|^|     |' >&2
+        echo "   请删掉不用的目录，或修正环境变量 FORENYX_HOME 与 shell 配置文件里的「${FNX_HOME_MARK}」记录后重试。" >&2
+        return 1
+    fi
+    if [ -n "$want" ]; then
+        if [ "$n" = "1" ] && [ "$FNX_EXISTING" != "$want" ]; then
+            echo "❌ 当前账号装在 ${FNX_EXISTING}，不是 --prefix 指定的 ${want}，已停止。" >&2
+            return 1
+        fi
+        if [ "$n" = "0" ]; then
+            fnx_is_root "$want" || return 2
+            if ! fnx_root_mine "$want"; then
+                echo "❌ $want 不属于当前账号（$(id -un)），已停止，未做任何改动。" >&2
+                return 1
+            fi
+        fi
+        FNX_LOCATED="$want"
+        return 0
+    fi
+    [ "$n" = "1" ] || return 2
+    FNX_LOCATED="$FNX_EXISTING"
+}
+
+# 卸载、装依赖前检查根目录与其中授权相关文件：所有者是本人、组与其他人不可写、
+# 没有额外 ACL（§3.3 权限：只检查，不去改）。参数：根目录、是否默认根目录(0/1)。
+# 自定义根目录不满足返回 1；默认根目录只警告（0.4.9 的 ~/.forenyx 可能随 umask 组可写，
+# 清不掉的 ACL 也是接受的残余风险，不能因此卸不掉）。
+fnx_perm_check() {
+    local r="$1" is_default="$2" f m me bad=""
+    me=$(fnx_my_uid)
+    for f in "$r" "$r/$FNX_ROOT_MARKER" "$r/.env" "$r/forenyx.lic"; do
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        m=$(fnx_mode_of "$f")
+        if [ -L "$f" ] || [ "$(fnx_uid_of "$f")" != "$me" ] || [ "$(printf '%s' "$m" | cut -c6)" = "w" ] \
+            || [ "$(printf '%s' "$m" | cut -c9)" = "w" ] || fnx_has_acl "$f"; then
+            bad="$bad
+    $(ls -ld "$f" 2>/dev/null)"
+        fi
+    done
+    [ -n "$bad" ] || return 0
+    if [ "$is_default" = "1" ]; then
+        echo -e "\033[0;33m⚠ 以下文件可被其他账号写入、不属于你或是符号链接：$bad\033[0m" >&2
+        return 0
+    fi
+    echo -e "\033[0;31m❌ 以下文件可被其他账号写入、不属于你或是符号链接，其中内容可能已被替换。已停止，未做任何改动：\033[0m$bad" >&2
+    echo "   请确认内容无误、收紧权限（目录 chmod 700，文件 chmod 600，并清除 ACL）后重试。" >&2
+    return 1
+}
+# <<< ROOT_FN_END
+
 # --print-client-id：只算不装，打印 client_id 后退出。
 # 供两处使用：① 与 forenyx-hostid.sh 做一致性断言（防止两边算法漂移）；
 # ② 已安装的机器上自查当前指纹。放在参数解析之前，避免走完整个安装流程。
@@ -216,11 +633,21 @@ USER_LICENSE=""
 OFFLINE_MODE=0
 RELEASE_TAG=""
 BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 安装根目录（docs/claude/install-prefix-plan.md）。不给时按已有安装或默认 ~/.forenyx 确定。
+PREFIX_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --license)
             USER_LICENSE="$2"
+            shift 2
+            ;;
+        --prefix)
+            if [ -z "${2:-}" ]; then
+                echo "错误：--prefix 后面要跟安装目录，例如 --prefix /data/zhang/forenyx" >&2
+                exit 1
+            fi
+            PREFIX_ARG="$2"
             shift 2
             ;;
         --release)
@@ -237,7 +664,17 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            shift
+            # 不认识的参数一律报错，不跳过：曾有人把 --prefix 漏写成 `--offline /data/zhang`，
+            # 被跳过后悄悄装进了默认位置，之后想换位置还得走搬家。这里还没改动任何文件。
+            # 先读完 stdin 再退出，理由同下方 abort()（curl | bash 时避免 curl 报写入失败）。
+            echo "错误：不认识的参数：$1" >&2
+            case "$1" in
+                -*) ;;
+                *) echo "      要指定安装位置的话，写成：--prefix $1" >&2 ;;
+            esac
+            echo "      支持的参数：--offline、--prefix <目录>、--license <授权码>、--release <版本>、--bundle <目录>" >&2
+            [ -t 0 ] || cat >/dev/null 2>&1 || true
+            exit 1
             ;;
     esac
 done
@@ -303,30 +740,6 @@ esac
 
 echo -e "  - Platform: ${GREEN}$PLATFORM${NC}"
 
-# 2. Directory Setup
-echo -e "${BLUE}[2/5] Setting up directories...${NC}"
-# 目录分两层。
-#
-# `~/.forenyx/` 是**机器级**的：授权文件、心跳缓存、client_id 都放这里，规划中的
-# 五个智能体（fnx_spec / fnx_arch / fnx_rtl / fnx_dv / fnx_sw）共用同一张授权、
-# 同一次心跳。这不只是省事——每个智能体各自心跳的话，服务端会把一台机器看成
-# 五个客户端，席位审计和吊销判定都会错。
-#
-# 而且这几个路径在 license-guard.ts 里是写死的（`join(homedir(), ".forenyx")`，
-# 没有环境变量开关），搬下去授权直接失效。
-#
-# `~/.forenyx/<智能体名>/` 才是单个智能体自己的：程序本体、wrapper、用户数据。
-# 派生新智能体只需要改 AGENT_NAME 一处。
-# 本仓库构建的智能体。**必须与 packages/coding-agent/package.json 的
-# piConfig.agentName 一致** —— 那是二进制自带的身份，横幅与 --version 从它来；
-# 这里的值定目录名、命令名与 PATH。安装脚本在下载解包之前就要用它定目录，
-# 没法反过来从 package.json 读，所以两处都写、装完再校验（见第 4 步之后）。
-FORENYX_ROOT="$HOME/.forenyx"
-FORENYX_DIR="$FORENYX_ROOT/$AGENT_NAME"
-BIN_DIR="$FORENYX_DIR/bin"
-LIBEXEC_DIR="$FORENYX_DIR/libexec"
-AGENT_DIR="$FORENYX_DIR/agent"
-
 # 提前退出前把 stdin 读完再走。
 #
 # 本脚本常以 `curl … | bash -s --` 运行，此时 stdin 就是脚本正文本身。中途 exit
@@ -338,6 +751,197 @@ abort() {
     [ -t 0 ] || cat >/dev/null 2>&1 || true
     exit "${1:-1}"
 }
+
+# 2. Directory Setup
+echo -e "${BLUE}[2/5] Setting up directories...${NC}"
+# 目录分两层。
+#
+# 安装根目录（默认 `~/.forenyx/`，可用 --prefix 指定）是**账号级**的：授权文件、
+# 心跳缓存、client_id 都放这里，规划中的五个智能体（fnx_spec / fnx_arch / fnx_rtl /
+# fnx_dv / fnx_sw）共用同一张授权、同一次心跳。这不只是省事——每个智能体各自心跳
+# 的话，服务端会把一台机器看成五个客户端，席位审计和吊销判定都会错。所以一个账号
+# 只允许一个根目录，第二个智能体自动装到第一个所在的根目录（§3.2）。
+#
+# 程序（license-guard.ts）从 wrapper 导出的 FORENYX_HOME 得知根目录，没有时用
+# ~/.forenyx（forenyx-root.ts）。
+#
+# `<根目录>/<智能体名>/` 才是单个智能体自己的：程序本体、wrapper、用户数据。
+# 派生新智能体只需要改 AGENT_NAME 一处。
+# 本仓库构建的智能体。**必须与 packages/coding-agent/package.json 的
+# piConfig.agentName 一致** —— 那是二进制自带的身份，横幅与 --version 从它来；
+# 这里的值定目录名、命令名与 PATH。安装脚本在下载解包之前就要用它定目录，
+# 没法反过来从 package.json 读，所以两处都写、装完再校验（见第 4 步之后）。
+#
+# ---- 确定根目录（docs/claude/install-prefix-plan.md §3.2、§3.3）----
+# 下面所有判断都在改动任何文件之前完成；不通过就退出，什么都不动。
+DEFAULT_ROOT_PHYS=$(fnx_realpath "$HOME/.forenyx")
+PREFIX_PHYS=""
+if [ -n "$PREFIX_ARG" ]; then
+    PREFIX_PHYS=$(fnx_realpath "$PREFIX_ARG")
+    if [ -z "$PREFIX_PHYS" ]; then
+        echo -e "${RED}❌ 无法解析 --prefix 指定的路径：$PREFIX_ARG${NC}"
+        abort 1
+    fi
+fi
+
+fnx_find_roots
+if [ -n "$FNX_FOREIGN" ]; then
+    echo -e "${RED}❌ 找到的 Forenyx 安装目录不属于当前账号（$(id -un)）：${NC}"
+    printf '%s\n' "$FNX_FOREIGN" | sed 's|^|     |'
+    echo -e "${YELLOW}   授权按「机器 + 账号」区分，不能与别的账号共用安装目录。${NC}"
+    echo -e "   请检查环境变量 FORENYX_HOME 与 shell 配置文件里的「${FNX_HOME_MARK}」记录。"
+    abort 1
+fi
+if [ -n "$FNX_STALE_VALUES" ]; then
+    echo -e "${YELLOW}ℹ 以下安装位置记录已失效（目录不存在或不是 Forenyx 安装目录），已忽略：${NC}"
+    printf '%s\n' "$FNX_STALE_VALUES" | sed 's|^|     |'
+    if [ -n "${FORENYX_HOME:-}" ] && printf '%s\n' "$FNX_STALE_VALUES" | grep -qxF "$FORENYX_HOME"; then
+        echo -e "   当前终端的环境变量 FORENYX_HOME 也指向它；安装完成后请重新打开终端。"
+    fi
+fi
+EXISTING_COUNT=$(printf '%s\n' "$FNX_EXISTING" | grep -c . || true)
+if [ "$EXISTING_COUNT" -gt 1 ]; then
+    echo -e "${RED}❌ 当前账号有不止一个 Forenyx 安装目录：${NC}"
+    printf '%s\n' "$FNX_EXISTING" | sed 's|^|     |'
+    echo -e "${YELLOW}   一个账号只能有一个安装目录（各智能体共用一份授权）。请只保留一个：${NC}"
+    echo -e "   删掉不用的目录，或修正环境变量 FORENYX_HOME 与 shell 配置文件里的「${FNX_HOME_MARK}」记录后重试。"
+    abort 1
+fi
+if [ -n "$PREFIX_PHYS" ]; then
+    if [ "$EXISTING_COUNT" = "1" ] && [ "$FNX_EXISTING" != "$PREFIX_PHYS" ]; then
+        echo -e "${RED}❌ 当前账号已经装在 ${FNX_EXISTING}，不能再装到 ${PREFIX_PHYS}。${NC}"
+        echo -e "${YELLOW}   一个账号只能有一个安装目录（各智能体共用一份授权）。${NC}"
+        echo -e "   要装在原处，用 --prefix ${FNX_EXISTING}（或不写 --prefix）；"
+        echo -e "   要换位置，先把整个 $FNX_EXISTING 搬过去（mv），再用新位置重装各个智能体。"
+        abort 1
+    fi
+    ROOT_PHYS="$PREFIX_PHYS"
+elif [ "$EXISTING_COUNT" = "1" ]; then
+    ROOT_PHYS="$FNX_EXISTING"
+else
+    ROOT_PHYS="$DEFAULT_ROOT_PHYS"
+fi
+
+if [ "$ROOT_PHYS" = "$DEFAULT_ROOT_PHYS" ]; then
+    # 默认根目录：wrapper 与 shell 配置里都写作 $HOME/.forenyx（运行时展开），与 0.4.9 相同
+    IS_DEFAULT_ROOT=1
+    FORENYX_ROOT="$HOME/.forenyx"
+    ROOT_SHOW="~/.forenyx"
+else
+    IS_DEFAULT_ROOT=0
+    FORENYX_ROOT="$ROOT_PHYS"
+    ROOT_SHOW="$ROOT_PHYS"
+    # 这个路径会原样写进 wrapper 与 shell 配置文件，也出现在给用户照抄的命令里
+    # （卸载结束时的 rm -rf、--prefix 提示等）：冒号会把 PATH 拆成多段；通配符与 shell
+    # 特殊字符照抄时会被展开或解释，rm -rf、chown 可能作用到别的目录。所以一律不允许，
+    # 只留字母、数字和 / . _ - + @ % , = ~ 等普通字符（代码审核：通配符路径）。
+    case "$ROOT_PHYS" in
+        *[[:space:]:\"\'\$\`\\\*\?\[\]\;\&\|\<\>\(\)\{\}\!\#]*)
+            echo -e "${RED}❌ 安装目录的路径里不能有空格、冒号、引号、\$、反引号、反斜杠，也不能有 * ? [ ] ; & | < > ( ) { } ! # 等 shell 特殊字符：$ROOT_PHYS${NC}"
+            echo -e "   请换一个只含字母、数字和 / . _ - 的路径。"
+            abort 1
+            ;;
+    esac
+    if [ -e "$ROOT_PHYS" ] && [ ! -d "$ROOT_PHYS" ]; then
+        echo -e "${RED}❌ $ROOT_PHYS 已存在，但不是目录。${NC}"
+        abort 1
+    fi
+    if [ -d "$ROOT_PHYS" ] && ! fnx_is_root "$ROOT_PHYS" \
+        && [ -n "$(ls -A "$ROOT_PHYS" 2>/dev/null)" ]; then
+        echo -e "${RED}❌ $ROOT_PHYS 不是空目录，也不是 Forenyx 安装目录。${NC}"
+        echo -e "${YELLOW}   为免与其中的文件混在一起（卸载时会删除根目录里的 .env 等文件），请指定一个新目录或空目录，${NC}"
+        echo -e "   例如 --prefix $ROOT_PHYS/forenyx"
+        abort 1
+    fi
+fi
+
+if [ -d "$ROOT_PHYS" ] && ! fnx_root_mine "$ROOT_PHYS"; then
+    echo -e "${RED}❌ 安装目录 $ROOT_SHOW 或其中的标记文件 $FNX_ROOT_MARKER 不属于当前账号（$(id -un)）。${NC}"
+    echo -e "${YELLOW}   授权按「机器 + 账号」区分，不能与别的账号共用安装目录。请换一个由你本人创建的目录。${NC}"
+    abort 1
+fi
+# 授权相关文件是符号链接或不属于自己时，在改动任何文件之前停下（默认位置也一样：
+# 顺着链接会把授权写到别处，不属于自己的文件到后面设权限时也会失败、留下装了一半的状态）
+if [ -d "$ROOT_PHYS" ]; then
+    FNX_BAD_FILES=$(fnx_sensitive_problems "$ROOT_PHYS")
+    if [ -n "$FNX_BAD_FILES" ]; then
+        echo -e "${RED}❌ 安装目录里的以下文件不是你本人的普通文件（符号链接、硬链接、目录或属于他人），已停止，未做任何改动：${NC}"
+        printf '%s\n' "$FNX_BAD_FILES" | sed 's|^|     |'
+        echo -e "${YELLOW}   请确认内容无误后换成你本人的普通文件（例如 cp 一份再替换），然后重试。${NC}"
+        abort 1
+    fi
+fi
+
+# 上级目录他人可写时，他人可以把根目录改名、再放一个同名目录：只提示，不拦（§3.3）
+fnx_parent_warn "$ROOT_PHYS"
+
+# 以上全部通过才开始建目录。umask 077：顺带建出的各级上级目录也只有本人可访问，
+# 不会成为新的「他人可写的上级目录」
+if ! (umask 077 && mkdir -p "$ROOT_PHYS"); then
+    # 最常见的情况是 /data 这类只有 root 能写的位置。给出能直接照做的办法：由管理员建好
+    # 安装目录本身并交给本账号（空目录可以直接装）。不建议把上一级交给本账号——
+    # --prefix /data/zhang 的上一级是 /data，那不该归某个普通账号。
+    echo -e "${RED}❌ 无法创建安装目录 ${ROOT_SHOW}：上一级目录不存在，或你没有写入权限。${NC}"
+    echo -e "   请管理员先建好这个目录并交给你（$(id -un)）："
+    # 路径按 shell 规则转义后再拼进命令：默认位置的 $HOME 可能含空格、反斜杠。命令作为 %s 的
+    # 参数输出，不能交给 echo -e——它会把 %q 产生的 \\ 折叠成 \，照抄后路径就变了。
+    fnx_q=$(printf '%q' "$ROOT_PHYS")
+    printf "     ${CYAN}%s${NC}\n" "sudo mkdir -p $fnx_q && sudo chown $(id -un) $fnx_q && sudo chmod 700 $fnx_q"
+    echo -e "   然后重新执行本命令。也可以换一个你能写入的位置。"
+    abort 1
+fi
+if [ ! -w "$ROOT_PHYS" ]; then
+    echo -e "${RED}❌ 安装目录 $ROOT_SHOW 不可写。${NC}"
+    abort 1
+fi
+# 授权文件与 .env 所在的目录只给本人（§3.3 权限）。默认 ~/.forenyx 也一样：
+# 0.4.9 由 mkdir -p 创建，umask 为 002 的服务器上同组人可写。
+chmod 700 "$ROOT_PHYS"
+if ! fnx_clear_acl "$ROOT_PHYS"; then
+    if [ "$IS_DEFAULT_ROOT" = "1" ]; then
+        echo -e "${YELLOW}⚠ 无法清除 $ROOT_SHOW 上的访问控制列表（ACL），其他账号可能仍能读写其中的授权文件。${NC}"
+        echo -e "${YELLOW}  请联系管理员处理（Linux：setfacl -b -k，macOS：chmod -N）。${NC}"
+    else
+        echo -e "${RED}❌ 无法清除 $ROOT_SHOW 上的访问控制列表（ACL）。${NC}"
+        echo -e "   请先手工清除后重试：Linux 用 setfacl -b -k ${ROOT_SHOW}，macOS 用 chmod -N $ROOT_SHOW"
+        abort 1
+    fi
+fi
+# 根目录收紧之后再查一次授权相关文件：上面那次检查到收紧之前，组可写的旧根目录里
+# 别人仍可能把文件换掉（之后别人就改不了目录里的条目了）。默认根目录清不掉 ACL 时
+# 这个窗口一直存在，属于已接受的残余风险（§3.3）。
+FNX_BAD_FILES=$(fnx_sensitive_problems "$ROOT_PHYS")
+if [ -n "$FNX_BAD_FILES" ]; then
+    echo -e "${RED}❌ 安装目录里的以下文件在检查之后被改动，不再是你本人的普通文件，已停止：${NC}"
+    printf '%s\n' "$FNX_BAD_FILES" | sed 's|^|     |'
+    echo -e "${YELLOW}   可能有人在改动安装目录。除收紧了安装目录本身的权限外未做其他改动，请确认后重试。${NC}"
+    abort 1
+fi
+# 已有的授权相关文件先收紧（写入任何东西之前，§3.3 权限）：清不掉 ACL 时自定义根目录
+# 在这里就停下，不留装了一半的状态。新建的文件在安装末尾再设一次。
+for fnx_f in "$ROOT_PHYS/$FNX_ROOT_MARKER" "$ROOT_PHYS/.env" "$ROOT_PHYS/forenyx.lic"; do
+    [ -f "$fnx_f" ] || continue
+    chmod 600 "$fnx_f"
+    if ! fnx_clear_acl "$fnx_f"; then
+        if [ "$IS_DEFAULT_ROOT" = "1" ]; then
+            echo -e "${YELLOW}⚠ 无法清除 $fnx_f 上的访问控制列表（ACL），其他账号可能仍能读写它。请联系管理员处理。${NC}"
+        else
+            echo -e "${RED}❌ 无法清除 $fnx_f 上的访问控制列表（ACL）。${NC}"
+            echo -e "   请先手工清除后重试：Linux 用 setfacl -b -k，macOS 用 chmod -N。"
+            abort 1
+        fi
+    fi
+done
+if [ ! -f "$ROOT_PHYS/$FNX_ROOT_MARKER" ]; then
+    fnx_marker_write "$ROOT_PHYS" || {
+        echo -e "${RED}❌ 无法写入 $ROOT_SHOW/$FNX_ROOT_MARKER${NC}"; abort 1; }
+fi
+echo -e "  - Install root: ${GREEN}$ROOT_SHOW${NC}"
+
+FORENYX_DIR="$FORENYX_ROOT/$AGENT_NAME"
+BIN_DIR="$FORENYX_DIR/bin"
+LIBEXEC_DIR="$FORENYX_DIR/libexec"
+AGENT_DIR="$FORENYX_DIR/agent"
 
 # ---------------------------------------------------------------------------
 # 产物身份校验：包/源码自带的 piConfig.agentName 必须等于本脚本的 AGENT_NAME。
@@ -397,7 +1001,7 @@ print((d.get('piConfig') or {}).get('agentName', ''))
 # ---------------------------------------------------------------------------
 if [ -d "$FORENYX_ROOT/libexec" ] && [ ! -d "$FORENYX_DIR/libexec" ]; then
     echo -e "${RED}❌ 检测到旧版目录布局：$FORENYX_ROOT/libexec${NC}"
-    echo -e "${YELLOW}   新版把每个智能体装进 ~/.forenyx/<智能体名>/，与旧布局不能并存。${NC}"
+    echo -e "${YELLOW}   新版把每个智能体装进 $ROOT_SHOW/<智能体名>/，与旧布局不能并存。${NC}"
     echo
     # 旧布局上根本没有 $AGENT_NAME 这个命令——那是这次要装的新命令名。这台机器
     # 手里的是旧 wrapper（历来叫 forenyx）。从磁盘上实际找出来，别让人去敲一个
@@ -414,15 +1018,15 @@ if [ -d "$FORENYX_ROOT/libexec" ] && [ ! -d "$FORENYX_DIR/libexec" ]; then
     echo -e "   请先清理旧版："
     echo -e "     ${CYAN}${LEGACY_CMD} uninstall${NC}   （选择不保留数据，或按下面手工清）"
     echo -e "   手工清理："
-    echo -e "     ${CYAN}rm -rf ~/.forenyx/bin ~/.forenyx/libexec${NC}"
+    echo -e "     ${CYAN}rm -rf $ROOT_SHOW/bin $ROOT_SHOW/libexec${NC}"
     echo -e "     然后删掉 ~/.bashrc（或 .zshrc）里这一行："
     echo -e "     ${CYAN}export PATH=\"\$HOME/.forenyx/bin:\$PATH\"${NC}"
     echo
-    echo -e "${YELLOW}   旧版的用户数据在 ~/.forenyx/agent/，新版不会自动搬。${NC}"
+    echo -e "${YELLOW}   旧版的用户数据在 $ROOT_SHOW/agent/，新版不会自动搬。${NC}"
     echo -e "   需要保留 API key 与会话历史的话，清理完再执行一次本脚本，装好后："
-    echo -e "     ${CYAN}cp -r ~/.forenyx/agent/. ~/.forenyx/$AGENT_NAME/agent/${NC}"
+    echo -e "     ${CYAN}cp -r $ROOT_SHOW/agent/. $ROOT_SHOW/$AGENT_NAME/agent/${NC}"
     echo
-    echo -e "${YELLOW}   授权文件 ~/.forenyx/forenyx.lic 与 .env 不用动，新版仍然用它们。${NC}"
+    echo -e "${YELLOW}   授权文件 $ROOT_SHOW/forenyx.lic 与 .env 不用动，新版仍然用它们。${NC}"
     abort 1
 fi
 
@@ -713,20 +1317,21 @@ SERVER_URL="$DOWNLOAD_URL"
 #   3. 无 python3 时跳过。用 grep 抠嵌套 JSON 太脆，宁可不写、留给心跳补。
 # -----------------------------------------------------------------------------
 if command -v python3 >/dev/null 2>&1; then
-    if echo "$RESPONSE" | python3 -c "
+    # 路径由环境变量传入：根目录可能是 --prefix 指定的（install-prefix-plan.md 实施记录）
+    if echo "$RESPONSE" | FNX_LIC_PATH="$FORENYX_ROOT/forenyx.lic" python3 -c "
 import sys, json, os
 d = json.load(sys.stdin)
 f = d.get('license_file')
 if not isinstance(f, dict):
     raise SystemExit(1)
-path = os.path.expanduser('~/.forenyx/forenyx.lic')
+path = os.environ['FNX_LIC_PATH']
 tmp = path + '.tmp'
 with open(tmp, 'w') as fh:
     json.dump(f, fh, indent=2)
 os.chmod(tmp, 0o600)
 os.replace(tmp, path)          # 原子替换，避免读到半截文件
 " 2>/dev/null; then
-        echo -e "  - ${GREEN}✓ 已写入授权文件 ~/.forenyx/forenyx.lic${NC}"
+        echo -e "  - ${GREEN}✓ 已写入授权文件 $ROOT_SHOW/forenyx.lic${NC}"
     fi
 fi
 
@@ -863,10 +1468,10 @@ else
     LICENSE_LINE="# FORENYX_LICENSE_KEY 未设置：授权码取自导入的授权文件（$AGENT_NAME license import）"
 fi
 if [ ! -f "$GLOBAL_ENV_FILE" ]; then
-    echo -e "  - Initializing global user configuration file ~/.forenyx/.env..."
+    echo -e "  - Initializing global user configuration file $ROOT_SHOW/.env..."
     cat << EOF > "$GLOBAL_ENV_FILE"
 # =============================================================================
-# Forenyx AI 全局配置（~/.forenyx/.env）
+# Forenyx AI 全局配置（$ROOT_SHOW/.env）
 #
 # 本机所有智能体（fnx_dv / fnx_rtl / ...）共用这一份。
 # 两组配置作用完全不同，改动前先看清在哪一节。
@@ -889,7 +1494,7 @@ FORENYX_CLIENT_ID=$CLIENT_ID
 # 直接读本文件）。不填的话该 skill 会在开始前终止并提示来这里配置。
 #
 # 注意：这与 CLI 对话用的模型是两套配置。对话模型走 CLI 内的 /login，写在
-# ~/.forenyx/<智能体名>/agent/auth.json，每个智能体各自一份；这里填的只管
+# $ROOT_SHOW/<智能体名>/agent/auth.json，每个智能体各自一份；这里填的只管
 # 文档转换，且五个智能体共用。
 # -----------------------------------------------------------------------------
 OPENAI_API_KEY=
@@ -917,7 +1522,7 @@ else
     # （license-guard.ts 的 readEnvValue），手改出的缩进行或重复行若漏删，客户端照样读到旧码。
     if [ -z "$USER_LICENSE" ]; then
         if env_has FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE"; then
-            echo -e "  - 未提供授权码，移除 ~/.forenyx/.env 中原有的授权码（改由导入的授权文件提供）"
+            echo -e "  - 未提供授权码，移除 $ROOT_SHOW/.env 中原有的授权码（改由导入的授权文件提供）"
             env_del FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE" || exit 1
         fi
     elif env_has FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE"; then
@@ -925,11 +1530,11 @@ else
         # 与它比较；不同就改写第一行、删掉其余匹配行，见 env_set。
         OLD_LICENSE=$(env_get FORENYX_LICENSE_KEY "$GLOBAL_ENV_FILE")
         if [ "$OLD_LICENSE" != "$USER_LICENSE" ]; then
-            echo -e "  - 授权码已变更，更新 ~/.forenyx/.env（${OLD_LICENSE} → ${USER_LICENSE}）"
+            echo -e "  - 授权码已变更，更新 $ROOT_SHOW/.env（${OLD_LICENSE} → ${USER_LICENSE}）"
             env_set FORENYX_LICENSE_KEY "$USER_LICENSE" "$GLOBAL_ENV_FILE" || exit 1
         fi
     else
-        echo -e "  - Saving license key to ~/.forenyx/.env..."
+        echo -e "  - Saving license key to $ROOT_SHOW/.env..."
         env_set FORENYX_LICENSE_KEY "$USER_LICENSE" "$GLOBAL_ENV_FILE" || exit 1
     fi
 
@@ -943,7 +1548,7 @@ else
     EXISTING_CID=$(env_get FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE")
     if [ -z "$EXISTING_CID" ]; then
         if env_has FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE"; then
-            echo -e "  - ~/.forenyx/.env 中的设备标识为空，按本机重新写入"
+            echo -e "  - $ROOT_SHOW/.env 中的设备标识为空，按本机重新写入"
             env_del FORENYX_CLIENT_ID "$GLOBAL_ENV_FILE" || exit 1
         fi
         env_set FORENYX_CLIENT_ID "$CLIENT_ID" "$GLOBAL_ENV_FILE" || exit 1
@@ -972,6 +1577,22 @@ else
     env_del FORENYX_OFFLINE "$GLOBAL_ENV_FILE" || exit 1
 fi
 
+# 授权相关文件只给本人读写（§3.3 权限）。.env 此前没有设权限，随 umask，可能组可读写。
+# 额外 ACL 一并清除；清不掉时自定义根目录停止，默认根目录警告（接受的残余风险）。
+for fnx_f in "$GLOBAL_ENV_FILE" "$FORENYX_ROOT/$FNX_ROOT_MARKER" "$FORENYX_ROOT/forenyx.lic"; do
+    [ -f "$fnx_f" ] || continue
+    chmod 600 "$fnx_f"
+    if ! fnx_clear_acl "$fnx_f"; then
+        if [ "$IS_DEFAULT_ROOT" = "1" ]; then
+            echo -e "${YELLOW}⚠ 无法清除 $fnx_f 上的访问控制列表（ACL），其他账号可能仍能读写它。请联系管理员处理。${NC}"
+        else
+            echo -e "${RED}❌ 无法清除 $fnx_f 上的访问控制列表（ACL）。${NC}"
+            echo -e "   请先手工清除后重试：Linux 用 setfacl -b -k，macOS 用 chmod -N。"
+            exit 1
+        fi
+    fi
+done
+
 # 再查一次装到位的产物。解包时已经查过同一件事（verify_agent_identity），这里查的是
 # "cp 之后 libexec 里真正躺着的东西"——cp 拷了一半、或者 libexec 里混进了上一次安装的
 # 残留，都只有这一刻看得见。成本是读一个文件。
@@ -995,14 +1616,36 @@ cat << EOF > "$WRAPPER_FILE"
 AGENT_NAME="$AGENT_NAME"
 EOF
 
+# 安装根目录（docs/claude/install-prefix-plan.md §3.4）：授权文件与心跳缓存，各智能体共用。
+#   默认位置：写作 $HOME/.forenyx，运行时按当时的 $HOME 展开，与 0.4.9 相同；
+#   --prefix 指定的位置：写死绝对路径（不依赖 shell 配置文件，LSF/bsub 下也找得到文件）。
+# 两种都导出 FORENYX_HOME，覆盖终端里继承来的旧值，程序与 wrapper 永远用同一个根目录。
+# 路径已在 3.3 中排除了空格、引号、$ 等字符，可以直接放进双引号。
+if [ "$IS_DEFAULT_ROOT" = "1" ]; then
+    {
+        echo '# 安装根目录：默认位置（运行时按 $HOME 展开）'
+        echo 'FORENYX_ROOT="$HOME/.forenyx"'
+        echo 'FNX_IS_CUSTOM_ROOT=0'
+    } >> "$WRAPPER_FILE"
+else
+    {
+        echo "# 安装根目录：安装时用 --prefix 指定。搬动这个目录后要用新位置重新安装（§3.9）"
+        echo "FORENYX_ROOT=\"$FORENYX_ROOT\""
+        echo 'FNX_IS_CUSTOM_ROOT=1'
+    } >> "$WRAPPER_FILE"
+fi
+echo 'export FORENYX_HOME="$FORENYX_ROOT"' >> "$WRAPPER_FILE"
+
 # 读 .env 的函数与安装器共用同一份（declare 原样输出），规则见 ENV_PL 上方的说明。
 declare -p ENV_PL >> "$WRAPPER_FILE"
 declare -f env_selftest env_get env_has >> "$WRAPPER_FILE"
+# 卸载要做的根目录检查与 shell 配置清理，同样原样带上（ROOT_FN 段）。
+declare -p FNX_RC_FILES FNX_PATH_MARK_PREFIX FNX_HOME_MARK FNX_ROOT_MARKER FNX_PL >> "$WRAPPER_FILE"
+declare -f fnx_realpath fnx_my_uid fnx_uid_of fnx_mode_of fnx_has_acl fnx_clear_acl fnx_is_root \
+    fnx_marker_get fnx_root_mine fnx_sensitive_problems fnx_rc_is_csh fnx_rc_homes fnx_rc_edit fnx_rc_remove_path \
+    fnx_perm_check >> "$WRAPPER_FILE"
 
 cat << 'EOF' >> "$WRAPPER_FILE"
-# 机器级：授权文件与心跳缓存，所有智能体共用。license-guard.ts 里写死了这个
-# 位置，不要改。
-FORENYX_ROOT="$HOME/.forenyx"
 # 本智能体自己的根
 FORENYX_DIR="$FORENYX_ROOT/$AGENT_NAME"
 BIN_DIR="$FORENYX_DIR/bin"
@@ -1147,7 +1790,18 @@ case "$1" in
             LOCAL_LICENSE=$(env_get FORENYX_LICENSE_KEY "$FORENYX_ROOT/.env")
         fi
 
-        if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash -s -- --license "$LOCAL_LICENSE"; then
+        # 安装位置（docs/claude/install-prefix-plan.md §3.6）：
+        #   自定义根目录 → 传 --prefix，装回原处；
+        #   默认根目录 → 不传（与 0.4.9 相同，$HOME 含空格也不受 --prefix 的字符限制），
+        #     先清掉 FORENYX_HOME，免得安装器把它当成「已有安装」的线索（wrapper 刚导出的是默认值，
+        #     终端里继承来的旧值也一并清掉）。
+        FNX_UPDATE_ARGS=(--license "$LOCAL_LICENSE")
+        if [ "$FNX_IS_CUSTOM_ROOT" = "1" ]; then
+            FNX_UPDATE_ARGS+=(--prefix "$FORENYX_ROOT")
+        else
+            unset FORENYX_HOME
+        fi
+        if ! curl -fsSL --connect-timeout 5 "https://raw.githubusercontent.com/$RELEASES_REPO/main/install.sh" | bash -s -- "${FNX_UPDATE_ARGS[@]}"; then
             echo -e "\033[0;31mError: Update failed during execution of the remote install script.\033[0m"
             exit 1
         fi
@@ -1174,10 +1828,19 @@ case "$1" in
             done
         }
 
-        echo -e "  Uninstalling agent: \033[1m$AGENT_NAME\033[0m (~/.forenyx/$AGENT_NAME/)"
+        # ---- 删除任何东西之前的检查（docs/claude/install-prefix-plan.md §3.3、§3.7）----
+        FNX_ROOT_SHOW="$FORENYX_ROOT"
+        [ "$FNX_IS_CUSTOM_ROOT" = "1" ] || FNX_ROOT_SHOW="~/.forenyx"
+        if [ -d "$FORENYX_ROOT" ] && ! fnx_root_mine "$FORENYX_ROOT"; then
+            echo -e "\033[0;31m❌ 安装目录 $FNX_ROOT_SHOW 不属于当前账号，已停止，未删除任何文件。\033[0m" >&2
+            exit 1
+        fi
+        fnx_perm_check "$FORENYX_ROOT" "$((1 - FNX_IS_CUSTOM_ROOT))" || exit 1
+
+        echo -e "  Uninstalling agent: \033[1m$AGENT_NAME\033[0m ($FNX_ROOT_SHOW/$AGENT_NAME/)"
         echo -e "\033[0;33mWould you like to keep your custom skills and configuration data?\033[0m"
-        echo -e "  Skills path: ~/.forenyx/$AGENT_NAME/agent/skills/custom/"
-        echo -e "  Configurations path: ~/.forenyx/$AGENT_NAME/agent/ (settings.json, auth.json, sessions/)"
+        echo -e "  Skills path: $FNX_ROOT_SHOW/$AGENT_NAME/agent/skills/custom/"
+        echo -e "  Configurations path: $FNX_ROOT_SHOW/$AGENT_NAME/agent/ (settings.json, auth.json, sessions/)"
         confirm_yn KEEP_DATA "Keep these files? (y/n, default: y): " y
         
         if [ "$KEEP_DATA" = "y" ]; then
@@ -1187,7 +1850,7 @@ case "$1" in
         else
             echo -e "\033[0;31mDeleting all data for agent $AGENT_NAME...\033[0m"
             rm -rf "$FORENYX_DIR"
-            echo -e "  - Cleared ~/.forenyx/$AGENT_NAME/."
+            echo -e "  - Cleared $FNX_ROOT_SHOW/$AGENT_NAME/."
         fi
 
         # 授权是机器级的，几个智能体共用。卸掉一个就删掉它，剩下的全部启动不了；
@@ -1199,10 +1862,10 @@ case "$1" in
             fi
         done
         if [ "$REMAINING" -gt 0 ]; then
-            echo -e "  - 本机还有 $REMAINING 个智能体，保留共用的授权文件 ~/.forenyx/forenyx.lic"
+            echo -e "  - 本机还有 $REMAINING 个智能体，保留共用的授权文件 $FNX_ROOT_SHOW/forenyx.lic"
         elif [ -f "$FORENYX_ROOT/forenyx.lic" ] || [ -f "$FORENYX_ROOT/.env" ]; then
             echo -e "\033[0;33m本机已无其它智能体。是否一并删除授权文件与授权配置？\033[0m"
-            echo -e "  ~/.forenyx/forenyx.lic, ~/.forenyx/.env"
+            echo -e "  $FNX_ROOT_SHOW/forenyx.lic, $FNX_ROOT_SHOW/.env"
             echo -e "  \033[0;33m删除后重装需要重新激活（内网机器需重新申请 .lic）。\033[0m"
             confirm_yn DEL_LIC "Delete license data? (y/n, default: n): " n
             if [ "$DEL_LIC" = "y" ]; then
@@ -1216,29 +1879,18 @@ case "$1" in
             fi
         fi
         
-        # Cleanup PATH
-        SHELL_NAME=$(basename "$SHELL")
-        RC_FILE=""
-        case "$SHELL_NAME" in
-            zsh) RC_FILE="$HOME/.zshrc" ;;
-            bash) [ -f "$HOME/.bash_profile" ] && RC_FILE="$HOME/.bash_profile" || RC_FILE="$HOME/.bashrc" ;;
-            csh|tcsh) [ -f "$HOME/.tcshrc" ] && RC_FILE="$HOME/.tcshrc" || RC_FILE="$HOME/.cshrc" ;;
-            *) RC_FILE="$HOME/.bashrc" ;;
-        esac
-        
-        # 只删本智能体那一行。原先匹配的是 "forenyx/bin"，在多智能体下会把另外
-        # 四个的 PATH 一起删掉——卸一个，五个都用不了。
-        PATH_PAT="forenyx/$AGENT_NAME/bin"
-        if [ -f "$RC_FILE" ] && grep -q "$PATH_PAT" "$RC_FILE"; then
-            TEMP_RC=$(mktemp)
-            grep -v "$PATH_PAT" "$RC_FILE" \
-                | grep -v "# Forenyx AI CLI PATH configuration ($AGENT_NAME)" > "$TEMP_RC" || true
-            cat "$TEMP_RC" > "$RC_FILE"
-            rm -f "$TEMP_RC"
-            echo -e "  - Removed $AGENT_NAME PATH configuration from $RC_FILE."
-        fi
-        
+        # Cleanup PATH：所有常见配置文件里本智能体的 PATH 行都删（§3.5）。按标记删，
+        # 不按路径字符串——根目录不一定叫 forenyx。别的智能体的行、FORENYX_HOME 记录不动：
+        # 留着记录，下次不带 --prefix 重装仍能回到这个根目录。
+        fnx_rc_remove_path
+        echo -e "  - Removed $AGENT_NAME PATH configuration from shell config files."
+
         echo -e "\033[0;32m\033[1m$AGENT_NAME has been successfully uninstalled!\033[0m"
+        # 告诉用户留下了什么（§3.7）
+        if [ -d "$FORENYX_ROOT" ] && [ -n "$(ls -A "$FORENYX_ROOT" 2>/dev/null)" ]; then
+            echo -e "  安装目录 $FNX_ROOT_SHOW 仍保留：$(ls -A "$FORENYX_ROOT" 2>/dev/null | tr '\n' ' ')"
+            echo -e "  重装时会自动装回这里；彻底清理请删除整个目录：\033[0;36mrm -rf $FNX_ROOT_SHOW\033[0m"
+        fi
         exit 0
         ;;
 esac
@@ -1271,53 +1923,54 @@ chmod +x "$WRAPPER_FILE"
 
 # 5. Environment PATH Setup
 echo -e "${BLUE}[5/5] Configuring shell PATH environment...${NC}"
+# 按标记改 shell 配置文件（docs/claude/install-prefix-plan.md §3.5）。顺序：
+#   1) 删掉指向失效位置的 FORENYX_HOME 记录（所有配置文件）；
+#   2) 默认根目录 → 删掉全部 FORENYX_HOME 记录；自定义根目录 → 当前 shell 的配置文件里
+#      写入、其余已有记录的文件里就地更新（第二个智能体不带 --prefix 也能找回这里）；
+#   3) PATH 行：当前 shell 的配置文件里写入或更新，其余已有本智能体 PATH 行的文件里
+#      就地更新——换过位置后，旧文件里不能还指着原来的路径。
 SHELL_NAME=$(basename "$SHELL")
-RC_FILE=""
-PATH_LINE=""
-
 case "$SHELL_NAME" in
-    zsh)
-        RC_FILE="$HOME/.zshrc"
-        PATH_LINE="export PATH=\"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
-        ;;
-    bash)
-        if [ -f "$HOME/.bash_profile" ]; then
-            RC_FILE="$HOME/.bash_profile"
-        else
-            RC_FILE="$HOME/.bashrc"
-        fi
-        PATH_LINE="export PATH=\"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
-        ;;
-    csh|tcsh)
-        if [ -f "$HOME/.tcshrc" ]; then
-            RC_FILE="$HOME/.tcshrc"
-        else
-            RC_FILE="$HOME/.cshrc"
-        fi
-        PATH_LINE="setenv PATH \"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
-        ;;
-    *)
-        RC_FILE="$HOME/.bashrc"
-        PATH_LINE="export PATH=\"\$HOME/.forenyx/$AGENT_NAME/bin:\$PATH\""
-        ;;
+    zsh) RC_FILE="$HOME/.zshrc" ;;
+    bash) if [ -f "$HOME/.bash_profile" ]; then RC_FILE="$HOME/.bash_profile"; else RC_FILE="$HOME/.bashrc"; fi ;;
+    csh|tcsh) if [ -f "$HOME/.tcshrc" ]; then RC_FILE="$HOME/.tcshrc"; else RC_FILE="$HOME/.cshrc"; fi ;;
+    *) RC_FILE="$HOME/.bashrc" ;;
 esac
 
-# 按智能体判重。匹配 "forenyx/bin" 的话，装了 fnx_dv 之后再装 fnx_rtl 会被
-# 误判成"已配置"，第二个智能体就进不了 PATH。
-if [ -f "$RC_FILE" ]; then
-    if grep -q "forenyx/$AGENT_NAME/bin" "$RC_FILE"; then
-        echo -e "  - Path configuration for $AGENT_NAME already exists in $RC_FILE."
-    else
-        echo -e "  - Adding $AGENT_NAME to PATH in $RC_FILE..."
-        echo -e "\n# Forenyx AI CLI PATH configuration ($AGENT_NAME)\n$PATH_LINE" >> "$RC_FILE"
-    fi
+if [ "$IS_DEFAULT_ROOT" = "1" ]; then
+    FNX_BIN_EXPR="\$HOME/.forenyx/$AGENT_NAME/bin"
 else
-    echo -e "  - Shell config file $RC_FILE not found. Creating it..."
-    echo -e "# Forenyx AI CLI PATH configuration ($AGENT_NAME)\n$PATH_LINE" > "$RC_FILE"
+    FNX_BIN_EXPR="$FORENYX_ROOT/$AGENT_NAME/bin"
+fi
+RC_FAILED=0
+for fnx_rc in $FNX_RC_FILES; do
+    fnx_f="$HOME/$fnx_rc"
+    if fnx_rc_is_csh "$fnx_f"; then
+        fnx_pline="setenv PATH \"$FNX_BIN_EXPR:\$PATH\""
+        fnx_hline="setenv FORENYX_HOME \"$FORENYX_ROOT\""
+    else
+        fnx_pline="export PATH=\"$FNX_BIN_EXPR:\$PATH\""
+        fnx_hline="export FORENYX_HOME=\"$FORENYX_ROOT\""
+    fi
+    fnx_add=0
+    [ "$fnx_f" = "$RC_FILE" ] && fnx_add=1
+    [ -f "$fnx_f" ] || [ "$fnx_add" = "1" ] || continue
+    if [ "$IS_DEFAULT_ROOT" = "1" ]; then
+        fnx_rc_edit "$fnx_f" FNXHOMEDELALL=1 FNXPATHMODE=set "FNXPATHLINE=$fnx_pline" FNXPATHADD="$fnx_add" \
+            || RC_FAILED=1
+    else
+        fnx_rc_edit "$fnx_f" "FNXHOMEDEL=$FNX_STALE_VALUES" "FNXHOMELINE=$fnx_hline" FNXHOMEADD="$fnx_add" \
+            FNXPATHMODE=set "FNXPATHLINE=$fnx_pline" FNXPATHADD="$fnx_add" || RC_FAILED=1
+    fi
+done
+if [ "$RC_FAILED" = "1" ]; then
+    echo -e "${YELLOW}⚠ 部分 shell 配置文件没能改动（见上方提示），请手工加入：${NC}"
+    echo -e "    ${CYAN}export PATH=\"$FNX_BIN_EXPR:\$PATH\"${NC}"
+    [ "$IS_DEFAULT_ROOT" = "1" ] || echo -e "    ${CYAN}export FORENYX_HOME=\"$FORENYX_ROOT\"${NC}"
+else
+    echo -e "  - $AGENT_NAME PATH configured in $RC_FILE."
 fi
 
-echo -e "${GREEN}${BOLD}=====================================================${NC}"
-echo -e "${GREEN}${BOLD}   ${AGENT_NAME} installation finished successfully!${NC}"
 echo -e "${GREEN}${BOLD}=====================================================${NC}"
 echo -e "To apply the environment changes immediately, please run:"
 echo -e "  ${CYAN}${BOLD}source $RC_FILE${NC}"

@@ -1,4 +1,4 @@
 {
-  "version": "v0.4.9",
-  "note": "### fnx_dv 0.4.9 \n- 1. 离线安装包与 Python 依赖包的文件名改为以 fnx_dv 开头（fnx_dv-offline-v0.4.9-<平台>.tar.gz、fnx_dv-pydeps-cp<版本>-<架构>.tar.gz），解压后的目录名同步改变；在线安装不受影响 \n- 2. 卸载时「是否保留数据」「是否删除授权数据」两个问题输错时会提示重新输入（此前在「是否保留数据」上输错会删除全部数据） \n- 3. 安装时先核对安装包是否为 fnx_dv，装错产品时原有安装不受影响 \n- 4. 内置技能调整：移除 ic-gen-hal；测试报告只保留精简版 uvm-report-gen-concise，不再提供 uvm-report-gen 与 uvm-report-gen-qmd"
+  "version": "v0.4.10",
+  "note": "### fnx_dv 0.4.10 \n- 1. 可以指定安装位置：安装时加 --prefix <目录>（如 /data/zhang/forenyx）即可装到 home 以外的目录，默认仍为 ~/.forenyx。同一账号的各个智能体共用这个目录和授权，后装的智能体自动装进同一目录；升级、卸载自动沿用原位置。用法与目录要求见部署手册「安装位置」 \n- 2. 安装时把安装目录设为只有本人能访问，授权文件与 .env 只有本人能读写，并清除额外的访问控制列表（ACL）；安装目录的上级目录可被他人改写时给出提示 \n- 3. 卸载时从所有常见 shell 配置文件（.bashrc、.bash_profile、.zshrc、.cshrc、.tcshrc）中删除该智能体的 PATH 行 \n- 4. /uvm-testcase-auto 在未配置 VENV_PYTHON 时的提示改为可执行的办法（重新启动后按提示填写，或在终端 export VENV_PYTHON 后再启动） \n- 5. ic-docx2md 从安装目录下的 .env 读取视觉模型配置"
 }

@@ -29,6 +29,24 @@ source ~/.tcshrc       # Tcsh 用户
 fnx_dv
 ```
 
+### 安装到指定目录
+
+默认装在 `~/.forenyx`。home 空间不够、或者规定软件不能装在 home 下时，安装时加 `--prefix <目录>`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash -s -- --prefix /data/zhang/forenyx
+```
+
+程序、授权文件、配置都放在这个目录里，下文称「安装目录」。
+
+> [!NOTE]
+> * **每个账号只有一个安装目录**：fnx_dv、fnx_sw 共用其中的授权。装第二个智能体时不写 `--prefix` 也会自动装进同一个目录；写成别的目录会被拒绝
+> * **目录要求**：指定的目录要么还不存在（安装器会创建），要么是属于您的空目录；新建时它的上一级目录必须您能写入。`/data` 这类只有 root 能写的位置，请管理员先建好属于您的目录（如 `/data/zhang`）
+> * **路径字符**：只能用字母、数字和 `/ . _ - + @ % , = ~`，不能有空格、引号、`$`、`*`、`;` 等特殊字符
+> * **升级、卸载**：自动沿用原来的位置，不用再写 `--prefix`
+> * **批处理环境**：LSF/bsub、cron 等不加载 shell 配置文件的环境里，要用完整路径 `<安装目录>/fnx_dv/bin/fnx_dv` 启动
+> * **换位置**：已经装在 `~/.forenyx`、想搬到别处时不用重新授权：退出所有智能体，`mv ~/.forenyx /data/zhang/forenyx`（新位置必须还不存在），再把本账号装的每个智能体都用上面带 `--prefix` 的命令各装一次
+
 ### 安装指定版本
 
 如需安装特定历史版本或在不同版本间切换，可使用 `--release` 参数指定目标版本号（版本号须带 `v` 前缀，形如 `v0.4.1`）：
@@ -114,7 +132,7 @@ bash install.sh --release v0.4.1
 
 如果您需要使用 `ic-docx2md` 内置技能（用于一键转换 Spec 文档 docx 到 Markdown），需要为其配置专用的 API 密钥 和多模态模型：
 
-直接编辑安装时自动初始化生成的全局配置文件 **`~/.forenyx/.env`**：
+直接编辑安装时自动初始化生成的全局配置文件：安装目录下的 **`.env`**（默认 `~/.forenyx/.env`；用 `--prefix` 装到别处的，把 `~/.forenyx` 换成您的安装目录）：
 
 ```bash
 vi ~/.forenyx/.env
