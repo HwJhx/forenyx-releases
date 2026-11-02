@@ -1,4 +1,4 @@
 {
-  "version": "v0.4.10",
-  "note": "### fnx_dv 0.4.10 \n- 1. 可以指定安装位置：安装时加 --prefix <目录>（如 /data/zhang/forenyx）即可装到 home 以外的目录，默认仍为 ~/.forenyx。同一账号的各个智能体共用这个目录和授权，后装的智能体自动装进同一目录；升级、卸载自动沿用原位置。用法与目录要求见部署手册「安装位置」 \n- 2. 安装时把安装目录设为只有本人能访问，授权文件与 .env 只有本人能读写，并清除额外的访问控制列表（ACL）；安装目录的上级目录可被他人改写时给出提示 \n- 3. 卸载时从所有常见 shell 配置文件（.bashrc、.bash_profile、.zshrc、.cshrc、.tcshrc）中删除该智能体的 PATH 行 \n- 4. /uvm-testcase-auto 在未配置 VENV_PYTHON 时的提示改为可执行的办法（重新启动后按提示填写，或在终端 export VENV_PYTHON 后再启动） \n- 5. ic-docx2md 从安装目录下的 .env 读取视觉模型配置"
+  "version": "v0.4.12",
+  "note": "### fnx_dv 0.4.12 \n- 1. UVM 环境搭建不再生成 trunk 目录，只生成 IP 目录本身；RTL、setup.csh、VIP 由平台统一管理 \n- 2. uvm-env 系列 skill 不再需要输入参数：IP 名、IP 目录、RTL 清单（.f）与顶层、VIP 列表、setup.csh、寄存器 XML、设计规格、验证计划由平台在启动 fnx_dv 时以 FNX_* 环境变量给出（一个会话对应一个 IP）；开始前统一检查，缺失或不合法即退出并列出问题 \n- 3. 生成的 Makefile 直接读取平台的 RTL 清单，在 fnx_dv 之外手动 make 时缺少变量会给出明确提示 \n- 4. 平台没有的 VIP 可放进 IP 目录下的 vip/，与平台 VIP 合并使用，重建环境时保留 \n- 5. uvm-env-cfg、uvm-env-config-db、uvm-env-base-seq-gen 单独调用也无需输入，总线协议取自 uvm-env-inf-connect 的识别记录；RTL 改动后记录自动失效 \n- 6. uvm-env-coverage-add 参数全部选填，默认使用最近一轮覆盖率报告"
 }

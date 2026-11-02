@@ -10,61 +10,41 @@
 
 ---
 
-## 快速安装与启动 (仅限 Linux)
+## 安装
 
-请在您的 Linux 终端中运行以下一键部署脚本：
+> [!IMPORTANT]
+> **已不支持在线安装。** 原来的 `curl … install.sh | bash` 现在只会提示「已不支持在线安装，请向管理员索取离线安装包」。
+> 请向管理员索取离线安装包，解开后按包内 `README.txt` 操作。
 
-```bash
-# 1. 运行安装脚本（系统将提示您输入专属商业授权激活码 License Key 完成一码一机绑定）
-curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash
-
-# 2. 刷新您当前终端的环境变量（根据您使用的 Shell 选择对应的刷新命令）
-source ~/.bashrc       # Bash 用户
-source ~/.zshrc        # Zsh 用户
-source ~/.cshrc        # Csh 用户
-source ~/.tcshrc       # Tcsh 用户
-# 或者直接重新打开一个新的终端窗口
-
-# 3. 运行启动客户端
-fnx_dv
-```
-
-### 安装到指定目录
-
-默认装在 `~/.forenyx`。home 空间不够、或者规定软件不能装在 home 下时，安装时加 `--prefix <目录>`：
+有两种装法，都在离线包目录里执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash -s -- --prefix /data/zhang/forenyx
+# A. 装到指定目录，所有用户共用（管理员先建好 /tools/forenyx，由 root 或某个账号执行一次）
+./install-release.sh --prefix /tools/forenyx
+
+# B. 只给自己用，装到 ~/.forenyx
+./install-release.sh
 ```
 
-程序、授权文件、配置都放在这个目录里，下文称「安装目录」。
+装到指定目录后：
 
-> [!NOTE]
-> * **每个账号只有一个安装目录**：fnx_dv、fnx_sw 共用其中的授权。装第二个智能体时不写 `--prefix` 也会自动装进同一个目录；写成别的目录会被拒绝
-> * **目录要求**：指定的目录要么还不存在（安装器会创建），要么是属于您的空目录；新建时它的上一级目录必须您能写入。`/data` 这类只有 root 能写的位置，请管理员先建好属于您的目录（如 `/data/zhang`）
-> * **路径字符**：只能用字母、数字和 `/ . _ - + @ % , = ~`，不能有空格、引号、`$`、`*`、`;` 等特殊字符
-> * **升级、卸载**：自动沿用原来的位置，不用再写 `--prefix`
-> * **批处理环境**：LSF/bsub、cron 等不加载 shell 配置文件的环境里，要用完整路径 `<安装目录>/fnx_dv/bin/fnx_dv` 启动
-> * **换位置**：已经装在 `~/.forenyx`、想搬到别处时不用重新授权：退出所有智能体，`mv ~/.forenyx /data/zhang/forenyx`（新位置必须还不存在），再把本账号装的每个智能体都用上面带 `--prefix` 的命令各装一次
+```
+/tools/forenyx/.forenyx/        所有用户共用，只放程序
+├── forenyx-hostid.sh           申请授权时运行它
+└── fnx_dv/
+    ├── bin/fnx_dv              命令入口
+    ├── libexec/                程序本体、加密的内置技能
+    └── tools/                  fd、rg
 
-### 安装指定版本
-
-如需安装特定历史版本或在不同版本间切换，可使用 `--release` 参数指定目标版本号（版本号须带 `v` 前缀，形如 `v0.4.1`）：
-
-```bash
-# 方式一：通过管道直接指定版本安装
-curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash -s -- --release v0.4.1
-
-# 方式二：下载安装脚本后执行
-curl -fsSLO https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh
-bash install.sh --release v0.4.1
+~/.forenyx/                     每个用户自己的，首次运行 fnx_dv 时自动建好
+├── .env                        设备标识、视觉模型配置、VENV_PYTHON
+├── forenyx.lic                 授权文件（license import 导入后才有）
+└── fnx_dv/agent/               设置、会话历史、自定义技能
 ```
 
-> [!TIP]
-> * **免交互授权**：可通过 `--license` 参数一并传入授权码，例如：`bash install.sh --release v0.4.1 --license FNX-XXXX-XXXX-XXXX`。
-> * **版本覆盖 / 回退**：若本机已完成过安装与激活，再次执行指定版本命令会自动沿用已绑定的 License 并安全覆盖程序。
-> * **可用版本列表**：可前往 [GitHub Releases](https://github.com/HwJhx/forenyx-releases/releases) 页面查看全部历史发布版本。
-> * *注：`--release` 参数仅适用于在线安装，不可与 `--offline` 离线参数同时使用。*
+* root 安装时会写入 `/etc/profile.d/forenyx.sh` 与 `forenyx.csh`，用户重新登录后直接输入 `fnx_dv`；普通账号安装时只改自己的 shell 配置文件，并打印这两个文件的内容供 root 放入。
+* 每个用户首次运行 `fnx_dv` 时按提示申请授权：运行 `/tools/forenyx/.forenyx/forenyx-hostid.sh`，把输出发给管理员换取授权文件，再执行 `fnx_dv license import <授权文件>`。
+* 配置目录可以用环境变量 `FORENYX_CODING_AGENT_DIR` 另行指定（例如每个 tmux 窗口一份配置），授权仍用 `~/.forenyx` 里的。
 
 ---
 
@@ -154,182 +134,118 @@ TEMPERATURE=0.1
 
 ---
 
-## 🔄 运维命令
+## 运维命令
 
-### 客户端升级 (Update)
+### 升级
 
-若发布仓库有最新版本更新，无需重新运行安装脚本，直接在终端中执行：
+不支持 `fnx_dv update`（执行时只会说明升级方法）。向管理员索取新版离线包，按原来的装法重新执行安装命令；装到指定目录的写同一个 `--prefix`，由安装账号执行，升级前请通知用户退出。各用户 `~/.forenyx` 里的授权与配置都会保留。
 
-```bash
-fnx_dv update
-```
-
-升级系统会自动读取本地 `.env` 中已绑定的 License 密钥，发起静默安全校验并执行一键覆盖升级。
-*(注：如果您是从不带 License 校验的历史极老版本（如 `v0.3.0`）升级，终端会抛出友好提示，引导您手动运行一次前台 `curl | bash` 安装命令以补充完成首次激活绑定。)*
-
-### 版本回退 / 切换指定版本
-
-若需要回退或切换到特定的历史版本，无需先卸载，直接传入 `--release` 参数重新运行安装命令即可安全覆盖：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/install.sh | bash -s -- --release v0.4.1
-```
-
-系统会自动读取并沿用本机已绑定的 License 及配置，仅对二进制程序进行版本切换。
-
-### 客户端卸载 (Uninstall)
-
-若需卸载客户端并清理环境变量，直接在终端中执行：
+### 卸载
 
 ```bash
 fnx_dv uninstall
 ```
 
-卸载程序将自动清理环境变量并移除客户端目录，您可以选择是否保留自定义技能 (Custom Skills) 和个人历史会话记录。
+* 装到指定目录时，只有安装账号（或 root）能卸载，其他用户执行会提示「你没有删除权限，请联系安装账号」。卸载不动任何用户自己的 `~/.forenyx`。
+* 以前在线安装的机器，也可以用本仓库的卸载脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HwJhx/forenyx-releases/main/uninstall.sh | bash
+```
 
 ---
 
 ## 📚 Skills 汇总
 
-> 标记 ⚡ 的为流水线 skill，会自动编排调用其它 skill 完成多阶段任务。
+fnx_dv 带 26 个 skill 和 1 个内置命令 `/uvm-testcase-auto`（直接输入，不用 `/skill:`）。**自 0.4.12 起，各 skill 的输入由平台在启动 fnx_dv 时以环境变量给出**（见下一节），调用时不用再给路径参数；`ic-docx2md` 除外，调用时给输入、输出路径。
 
-### 1. 文档审核类
-
-```
-┌──────────────────────────────────────────────────────┐
-│                    1. 文档审核类                     │
-│                                                      │
-│   ic-docx2md       ic-gen-hal                        │
-│                                                      │
-│   ┌────────────────────────────────────────────┐     │
-│   │  ic-audit-design-auto ⚡                   │     │
-│   │    ├─ ic-audit-prd-spec                    │     │
-│   │    └─ ic-audit-spec                        │     │
-│   └────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────┘
-```
-
-| Skill                       | 用途                                                                                                                  | 输入参数                                                                              | 输出                                                                |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `ic-docx2md`              | 将`.docx` 文档转换为 Markdown，自动提取图片并用视觉模型分析                                                         | `$0` docx路径, `$1` md输出路径（可选）                                            | `.md` 文件 + 图片目录                                             |
-| `ic-audit-spec`           | Spec 质量审查：串行执行 FSM 逻辑审查 + Spec 整体质量审查                                                              | `$0` Spec .md, `$1` 寄存器 XML                                                    | `fsm_review.md`, `spec_qa_review.md`                            |
-| `ic-gen-hal`              | 根据 IP Spec 和寄存器 XML，生成 HAL 硬件抽象层说明文档                                                                | `$0` Spec .md, `$1` 寄存器 XML（可选）, `$2` IP模块名, `$3` 输出路径（可选）  | `{IP}_hal.md`                                                     |
-| `ic-audit-prd-spec`       | 以 PRD 为基准，逐条验证每个 IP 需求是否在 Design Spec 中得到实现                                                      | `$0` 寄存器 XML, `$1` Spec .md/.docx, `$2` PRD .yaml, `$3` 输出路径（可选）   | `spec_review_result.md`                                           |
-| `ic-audit-design-auto` ⚡ | 一键设计审查：依次执行 PRD 需求验证 → 用户确认 → Spec 质量审查；自动 init tracker 并在完成后 append`"1.文档审核"` | `$0` Spec .md, `$1` 寄存器 XML, `$2` PRD .yaml, `$3` 需求验证报告路径（可选） | `spec_review_result.md`, `fsm_review.md`, `spec_qa_review.md` |
-
-### 2. UVM 测试计划生成类
-
-```
-┌──────────────────────────────────────────────────┐
-│              2. UVM 测试计划生成类               │
-│                                                  │
-│   ┌────────────────────────────────────────┐     │
-│   │  uvm-testplan-auto ⚡                  │     │
-│   │    ├─ uvm-testplan-gen-feature         │     │
-│   │    └─ uvm-testplan-gen-testplan        │     │
-│   └────────────────────────────────────────┐     │
-└──────────────────────────────────────────────────┘
-```
-
-| Skill                         | 用途                                                                                            | 输入参数                                                                                                               | 输出                                           |
-| ----------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `uvm-testplan-gen-feature`  | 根据 IP 设计文档和寄存器 XML，生成 UVM 测试功能点报告（双维度分类）                             | `$0` 寄存器 XML, `$1` 设计文档 .md, `$2` 输出路径（可选）                                                        | `uvm_feature_report.md`                      |
-| `uvm-testplan-gen-testplan` | 根据功能点报告和 Chisel 源码，为每个功能点生成结构化测试计划                                    | `$0` 功能点报告 .md, `$1` Chisel 源码路径, `$2` 输出路径（可选）                                                 | `uvm_testplan.md`                            |
-| `uvm-testplan-auto` ⚡      | 一键生成测试计划：依次调用功能点生成 → 用户审核 → 测试计划生成；完成后 append`"2.测试计划"` | `$0` 寄存器 XML, `$1` 设计文档 .md, `$2` Chisel 源码, `$3` 功能点报告路径（可选）, `$4` 测试计划路径（可选） | `uvm_feature_report.md`, `uvm_testplan.md` |
-
-### 3. 代码生成类
-
-> 下面两类（UVM 环境搭建 + UVM 测试执行）共同构成代码生成流程。
-
-```
-┌──────────────────────────────────────────────────────┐
-│                    3. 代码生成类                     │
-│                                                      │
-│   uvm-env-create                                     │
-│                                                      │
-│   ┌────────────────────────────────────────────┐     │
-│   │  uvm-env-impl ⚡                           │     │
-│   │    ├─ uvm-env-inf-connect                  │     │
-│   │    ├─ uvm-env-config-db                    │     │
-│   │    ├─ uvm-env-cfg                          │     │
-│   │    └─ uvm-env-base-seq-gen                 │     │
-│   └────────────────────────────────────────────┘     │
-│                                                      │
-│   ┌────────────────────────────────────────────┐     │
-│   │  uvm-testcase-auto ⚡                      │     │
-│   │    ├─ uvm-testcase-gen-testcase            │     │
-│   │    ├─ uvm-testcase-compile-sim             │     │
-│   │    └─ uvm-testcase-debug-failure           │     │
-│   └────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────┘
-```
-
-#### UVM 环境搭建
-
-| Skill                    | 用途                                                                                                                                                                                                                                  | 输入参数                                                                                                         | 输出                                                  |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `uvm-env-create`       | 为 IP 生成 UVM 环境骨架并跑冒烟测试。**trunk 模板与 `create_ip_env_v0.py` / `ipxact_to_vh_v1.py` 已内置于 skill 资源中**，无需再准备 `trunk.tar.gz`；若 `WORK_DIR/trunk/verif` 不存在会自动从 `references/trunk` 复制 | `$0` IP模块名, `$1` TC名, `$2` WORK_DIR, `$3` 寄存器 XML 路径                                            | UVM 环境骨架目录 + 冒烟测试结果                       |
-| `uvm-env-impl` ⚡      | 结合 RTL/Spec/Testplan/VIP 将环境骨架补全为可编译可运行，编排 4 个子技能；完成后 append`"3.uvm环境搭建"`                                                                                                                            | `$0` IP模块名, `$1` WORK_DIR, `$2` RTL 文件, `$3` Spec .md, `$4` Testplan .md, `$5` VIP 目录（可选） | 完善后的环境文件 + 编译通过                           |
-| `uvm-env-inf-connect`  | 根据 RTL 端口与总线协议生成接口连接文件                                                                                                                                                                                               | `$0` IP模块名, `$1` WORK_DIR, `$2` RTL 文件, `$3` VIP 目录（可选）                                       | `{ip}_inf_connect.sv`                               |
-| `uvm-env-config-db`    | 生成 config_db 注入文件（uvm-env-impl 子技能）                                                                                                                                                                                        | 由 uvm-env-impl 编排调用                                                                                         | `{ip}_config_db.sv`                                 |
-| `uvm-env-cfg`          | 完善 env 与 env_cfg 文件（uvm-env-impl 子技能）                                                                                                                                                                                       | 由 uvm-env-impl 编排调用                                                                                         | 完善后的`{ip}_env.sv` / `{ip}_env_cfg.sv`         |
-| `uvm-env-base-seq-gen` | 生成基础序列与冒烟序列文件                                                                                                                                                                                                            | IP 名 + 总线类型（交互收集）                                                                                     | `{ip}_base_sequence.sv`, `{ip}_smoke_sequence.sv` |
-
-#### UVM 测试执行
-
-| Skill                          | 用途                                                                                                                         | 输入参数                                                  | 输出                                                                   |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `uvm-testcase-gen-testcase`  | 根据 testplan 生成单个 TC（TC 类 + vseq），按需增量更新 scoreboard                                                           | `$0` WORK_DIR, `$1` testplan .md, `$2` TC名（可选） | `tc_<name>.sv`, `<name>_vseq.sv`                                   |
-| `uvm-testcase-compile-sim`   | 执行 VCS 编译与仿真，解析日志生成单 TC 报告并同步回归状态                                                                    | `$0` WORK_DIR, `$1` TC名                              | `com.log`, `run.log`, `<TC>_report.md`, `regression_status.md` |
-| `uvm-testcase-debug-failure` | 诊断编译/仿真失败：编译错误 AI 修复，仿真错误输出根因分析报告                                                                | `$0` WORK_DIR, `$1` TC名                              | 诊断报告 + 更新`<TC>_report.md`                                      |
-| `uvm-testcase-auto` ⚡       | 逐 TC 执行「生成 → 编译仿真 → 自动修复」闭环并汇总报告；完成后 append`"4.{分组名}"` / `"4.全部"` / `"4.指定TC(N个)"` | `$0` WORK_DIR, `$1` testplan .md                      | 终端汇总报告 + 各 TC 报告文件                                          |
-
-### 4. 反馈与迭代类
-
-```
-┌──────────────────────────────────────────────────────┐
-│                   4. 反馈与迭代类                    │
-│                                                      │
-│   uvm-coverage-closure                               │
-│                                                      │
-│   ┌────────────────────────────────────────────┐     │
-│   │  uvm-testcase-wave-rca ⚡                  │     │
-│   │    └─ uvm-fsdb-wave-extract                │     │
-│   └────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────┘
-```
-
-| Skill                        | 用途                                                                                                                                                                                                                       | 输入参数                                                                                                                   | 输出                                            |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `uvm-coverage-closure`     | 分析覆盖率缺口，人工确认 Dead Code 后向 testplan 追加补充条目                                                                                                                                                              | `$0` WORK_DIR, `$1` testplan .md, `--spec` / `--target-func` / `--target-code`（可选）                           | `coverage_gap_report.md` + 追加 testplan 条目 |
-| `uvm-testcase-wave-rca` ⚡ | 仿真失败的**波形迭代根因分析**：日志优先 → 波形取证 → RTL 下钻链式迭代，编排调用 `uvm-fsdb-wave-extract` 取值；只分析不改文件，输出结构化根因报告（区分 TB激励缺失/RTL bug/配置错）                              | `$0` WORK_DIR, `$1` TC名, `$2` RTL 文件/目录                                                                         | `wave_rca_report.json`                        |
-| `uvm-fsdb-wave-extract`    | **纯波形取值工具**：经 Verdi NPI 从 FSDB 按时间窗提取指定信号跳变历史 → 紧凑 JSON。信号入参自适应（先精确名查、查不到当正则模糊搜）；只取值不诊断，供 `uvm-testcase-wave-rca` 每轮调用。需仿真主机 + Verdi（NPI） | `$0` FSDB, `$1` TOP scope, `$2` START, `$3` END, `$4` SIGNALS, `$5` MAX_CHANGES（可选）, `$6` OUTPUT（可选） | `fsdb_extracted_wave.json`                    |
-
-### 5. 验证进度追踪类
-
-| Skill                    | 用途                                                                                                        | 输入参数                                                                                                                                                               | 输出                                                            |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `uvm-progress-tracker` | 维护验证进度 JSON：init 模式写入起点时间；append 模式追加一条 stage 记录（finish_time、time_min、coverage） | init：无参数；append：`$0` 阶段名, `$1` 覆盖率 0-100（可选）, `--file` 数据 JSON 路径（可选）, `--rpt-dir` VCS 报告目录（可选，自动读取覆盖率，优先于 `$1`） | `uvm_progress.json`                                           |
-| `uvm-progress-chart`   | 读取进度 JSON，生成"时间 vs 覆盖率"折线图                                                                   | `$0` JSON 路径, `$1` 输出目录, `$2` 文件名前缀（可选）                                                                                                           | `verification_progress.drawio`, `verification_progress.png` |
-
-> **与 auto skill 的关系**：以下 auto skill 会自动调用 `uvm-progress-tracker` 记录阶段完成时间：
->
-> | Auto Skill                  | tracker 行为                                                                                                          |
-> | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-> | `ic-audit-design-auto` ⚡ | 启动时**init**（清空并写入起点）；完成后 append `"1.文档审核"`                                                |
-> | `uvm-testplan-auto` ⚡    | 完成后 append`"2.测试计划"`                                                                                         |
-> | `uvm-env-impl` ⚡         | 完成后 append`"3.uvm环境搭建"`                                                                                      |
-> | `uvm-testcase-auto` ⚡    | 完成后 append`"4.{分组名}"` / `"4.全部"` / `"4.指定TC(N个)"`，覆盖率自动从 `{WORK_DIR}/sim/coverage/rpt` 读取 |
+| Skill | 类别 | 输入 ➔ 输出 | 归属工作流 |
+| :--- | :--- | :--- | :--- |
+| **`ic-docx2md`** | 规格抽取 | `.docx` / `.pdf` 文档 ➔ Markdown 规范与图片目录（调用时给输入、输出路径；一般由平台准备规格书时使用） | 1. 架构审计 |
+| **`ic-audit-spec`** | 架构审计 | 设计规格 + 寄存器描述 ➔ Spec 质量审查报告（有状态机时另出 FSM 审查报告） | 1. 架构审计 |
+| **`ic-audit-prd-spec`** | 需求对比 | PRD + 设计规格 + 寄存器描述 ➔ 需求验证报告 | 1. 架构审计 |
+| **`ic-audit-soc-prd-spec`** | 需求对比 | SoC PRD + SoC 规格 + 芯片寄存器描述（选用） ➔ SoC 级需求验证报告 | 1. 架构审计 |
+| **`ic-audit-soc-spec`** | 架构审计 | SoC 规格 + 芯片寄存器描述（选用） ➔ IP 级 / 连接级 / 系统级三份 SoC Spec 质量审查报告 | 1. 架构审计 |
+| **`ic-audit-design-auto`** | 编排 | 依次调用 `ic-audit-prd-spec`、`ic-audit-spec` ➔ 分阶段审计报告 | 1. 架构审计 |
+| **`uvm-testplan-gen-feature`**| 验证计划 | 设计规格 + 寄存器描述 ➔ 功能点报告 `doc/uvm_feature_report.md` | 2. 测试计划 |
+| **`uvm-testplan-gen-testplan`**| 验证计划 | 已审核功能点报告 + 设计规格 ➔ 验证计划 `doc/uvm_testplan.md` | 2. 测试计划 |
+| **`uvm-testplan-auto`** | 编排 | 依次调用 `gen-feature`、`gen-testplan` ➔ 功能点报告与验证计划 | 2. 测试计划 |
+| **`uvm-env-create`** | 环境搭建 | IP 名 + RTL 清单 + VIP 清单 + 寄存器描述 ➔ UVM 骨架与冒烟测试 | 3. 环境构建 |
+| **`uvm-env-cfg`** | 环境搭建 | 总线协议记录 ➔ `{ip}_env.sv`、`{ip}_env_cfg.sv` | 3. 环境构建 |
+| **`uvm-env-config-db`** | 环境搭建 | `tb_top` 虚接口 ➔ `uvm_config_db::set` 注入 | 3. 环境构建 |
+| **`uvm-env-inf-connect`** | 环境搭建 | RTL 端口列表 ➔ `{ip}_inf_connect.sv` 接口文件 | 3. 环境构建 |
+| **`uvm-env-impl`** | 环境搭建 | RTL + 设计规格 + 验证计划 + VIP ➔ 完整 Driver/Monitor/Scoreboard（编排 inf-connect 等子 skill） | 3. 环境构建 |
+| **`uvm-env-sva`** | 断言构建 | 验证计划 + RTL ➔ `sim/sva/*.sv` & `bind` | 3. 环境构建 |
+| **`uvm-env-coverage-add`** | 环境搭建 | 覆盖模型补建清单 + 验证计划 ➔ 增量补建 `{ip}_coverage.sv`（`COV=1` 编译验证，不跑仿真） | 5. 覆盖率收敛 |
+| **`uvm-env-base-seq-gen`** | 序列生成 | IP 名称 + 协议 ➔ `{ip}_base/smoke_sequence.sv` | 4. 用例与仿真 |
+| **`uvm-testcase-gen-testcase`**| 用例生成 | 验证计划 + `[TC_NAME]` ➔ TC 类 & Virtual Seq | 4. 用例与仿真 |
+| **`uvm-testcase-compile-sim`**| VCS 仿真 | `<TC>` ➔ 修 Lint 运行 VCS 输出 Log | 4. 用例与仿真 |
+| **`uvm-testcase-debug-failure`**| 日志 RCA | `com.log` / `run.log` ➔ AI 自动修编译错或出 RCA 报告 | 4. 用例与仿真 |
+| **`uvm-testcase-wave-rca`** | 波形 RCA | FSDB 波形 + `run.log` ➔ 链式迭代根因分析报告 | 4. 用例与仿真 |
+| **`uvm-fsdb-wave-extract`** | 波形提取 | FSDB 波形 + 信号名 ➔ 跳变历史 JSON 数据文件 | 4. 用例与仿真 |
+| **`/uvm-testcase-auto`**（内置命令） | 编排 | 验证计划 ➔ 逐 TC 生成、编译与汇总（不带参数，支持断点续跑） | 4. 用例与仿真 |
+| **`uvm-coverage-closure`** | 覆盖率 | VCS 覆盖率报告 + 验证计划 ➔ 缺口分析报告（两张人工裁决表）+ 验证计划补充条目 | 5. 覆盖率收敛 |
+| **`uvm-progress-tracker`** | 验证管理 | 回归/覆盖率数据 ➔ 维护 `uvm_progress.json`（每阶段 `start_time` / `duration`） | 5. 覆盖率收敛 |
+| **`uvm-progress-chart`** | 可视化 | 进度 JSON ➔ 趋势折线图 (`.drawio` + `.png`) | 5. 覆盖率收敛 |
+| **`uvm-report-gen-concise`** | 验证报告 | 覆盖率报告 + 验证计划 + RTL + 进度 JSON（后三项有则用） ➔ `doc/<IP>_uvm_verification_report.docx`（不含缺陷章节）+ 待确认项 | 5. 覆盖率收敛 |
 
 ---
 
 ## ⚙️ 环境变量
 
-首次调用需要执行 Python 脚本的 skill 时，系统会交互式提示你填写以下变量（后续调用无需再次填写）。涉及的 skill：`ic-docx2md`、`ic-audit-spec`、`ic-gen-hal`、`ic-audit-prd-spec`、`ic-audit-design-auto`、`uvm-testplan-gen-feature`、`uvm-coverage-closure`。
+### 平台环境变量（FNX_*）
 
-| 变量            | 说明                                                                                                                        |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `VENV_PYTHON` | Python 虚拟环境的绝对路径，如`/Users/jhx/anaconda3/envs/gen_testplan`。可通过 `conda env list` 查看所有可用环境后选择。 |
+* **一个 IP 启动一个 fnx_dv**，启动前在该进程的环境里设好下表的 IP 级变量；芯片级审查另起一个 fnx_dv，设芯片级变量。
+* 值都是字符串；除 `FNX_IP_NAME`、`FNX_DUT_TOP` 是名字外，其余都是以 `/` 开头的绝对路径。
+* 每个 skill 开始时检查本次用到的变量，缺失或不合法就一次列出全部问题后停止。标「选用」的没设就不用，设了也要合法。
+* 只在启动时读取，改了变量要重新启动 fnx_dv。
+
+未标「选用」的变量，在用到它的 skill 里都是必需的。
+
+### IP 级
+
+| # | 变量名 | 作用 | 格式要求 |
+|---|---|---|---|
+| 1 | `FNX_IP_NAME` | 本会话对应的 IP 名，如 `gsc` | 字母开头，只含字母、数字、下划线 |
+| 2 | `FNX_IP_DIR` | IP 目录，如 `/proj/chipA/verif/gsc`。验证环境生成在这里，文档写在其下的 `doc/` | 目录名必须等于 `FNX_IP_NAME`。可以还不存在（首次审查 spec、生成验证计划时），但上一级目录必须存在且可写 |
+| 3 | `FNX_SETUP_CSH` | 平台的环境加载脚本（csh），编译、仿真、看波形前加载 | fnx_dv 先进入 `FNX_IP_DIR` 再 source 它；加载后须满足下面「setup 脚本加载后须具备的」 |
+| 4 | `FNX_VIP_LIST` | 平台已有 VIP 的清单（纯文本文件） | 每行一个 VIP 目录的绝对路径，空行和 `#` 开头的行忽略，每个目录都须存在。须包含 `clk_rst_uvc`、`tilelink_uvc_v2.1`、`flx_vip`（验证环境模板固定使用；平台没有的，可由工程师放进 `FNX_IP_DIR/vip/`） |
+| 5 | `FNX_RTL_FILELIST` | 本 IP 的 RTL 文件清单（`.f`），编译和读 RTL 都用它 | 文件名为 `<IP 名>.f`（不区分大小写）；只用绝对路径；不嵌套 `-f` / `-F`；路径中不含 `$` 变量；DUT 的 RTL 逐个文件列出（或用 `-v`），可分布在多个目录；`-y` 只用于库目录。允许 `+incdir+`、`+define+`、`+libext+`、`-v`、`-y`、`//` 与 `#` 注释 |
+| 6 | `FNX_RTL_TOP_FILE` | DUT 顶层模块所在的 RTL 文件（`.v` / `.sv`） | 须出现在 `FNX_RTL_FILELIST` 中（文件行或 `-v`） |
+| 7 | `FNX_DUT_TOP` | DUT 顶层模块名，用于在 testbench 里例化 DUT、绑定断言 | 须是 `FNX_RTL_TOP_FILE` 中定义的一个 `module` |
+| 8 | `FNX_REG_XML` | 寄存器描述（IP-XACT 格式 XML） | 可读文件 |
+| 9 | `FNX_SPEC_FILE` | 设计规格文档（Markdown） | 可读文件。原件是 Word / PDF 时，由平台先用 `ic-docx2md` 转成 Markdown |
+| 10 | `FNX_IP_PRD_FILE` | IP 的 PRD（`.yaml`），spec 审核以它为基准 | 可读文件 |
+| 11 | `FNX_KB_FILE`（选用） | 用例知识库（Markdown，用户维护），生成用例、诊断失败时参照 | 设置了则须为可读文件；未设置时跳过知识库步骤 |
+| 12 | `FNX_CHISEL_DIR`（选用） | Chisel 源码目录，生成验证计划时从中提取状态机等 | 设置了则须为可读目录；未设置时只用 RTL |
+
+### 芯片级
+
+| # | 变量名 | 作用 | 格式要求 |
+|---|---|---|---|
+| 13 | `FNX_SOC_DIR` | 芯片级工作目录，审查报告写在其下的 `doc/` | 可以还不存在，但上一级目录必须存在且可写 |
+| 14 | `FNX_SOC_SPEC_FILE` | SoC 规格说明书（Markdown） | 可读文件 |
+| 15 | `FNX_SOC_PRD_FILE` | SoC PRD（`.yaml`） | 可读文件 |
+| 16 | `FNX_SOC_REG_FILE`（选用） | 芯片寄存器描述（`.svd` / `.xml` 等） | 设置了则须为可读文件；未设置时审查范围相应缩小 |
+
+### setup 脚本加载后须具备的
+
+不是单独设给 fnx_dv 的变量，而是 `FNX_SETUP_CSH` 执行后应当具备的条件；缺少时同样停止，并说明缺了什么。
+
+| 项 | 说明 | 何时需要 |
+|---|---|---|
+| `vcs` 命令 | 在 `PATH` 中能找到 `vcs` | 编译、仿真 |
+| `DC_HOME` | Design Compiler 安装目录（其下 `dw/sim_ver` 为 DesignWare 仿真模型） | 编译 |
+| `VERDI_HOME` | Verdi 安装目录。读取波形时从中自动查找 Verdi 自带的 Python | 看波形、带波形编译时 |
+| `DESIGNWARE_HOME` | Synopsys DesignWare（SVT VIP）安装目录 | 用到 Synopsys SVT VIP 时 |
+
+### VENV_PYTHON
+
+首次调用需要执行 Python 脚本的 skill 时，系统会交互式提示你填写，填好后保存在 `~/.forenyx/.env`，fnx_dv、fnx_sw 共用，后续无需再次填写。终端里设了同名环境变量时以终端的为准：root 可在 `/etc/profile.d/` 里统一 `export VENV_PYTHON=...`，所有用户都不用再填。
+
+| 变量 | 说明 |
+| --- | --- |
+| `VENV_PYTHON` | Python 环境的根目录（其下要有 `bin/python3`），如 `/home/zhang/miniconda3`。系统 Python 填 `/usr` |
 
 > **波形 skill（`uvm-testcase-wave-rca` / `uvm-fsdb-wave-extract`）不走 `VENV_PYTHON`**：它们用 Verdi 自带的 NPI Python 环境，需在**仿真主机（Linux）**上设 `VERDI_HOME`（如 `/opt/synopsys/verdi/W-2024.09-SP1`），其余（`LD_LIBRARY_PATH` 含 Qt5、`PYTHONPATH`、`$VPY`）由 `uvm-fsdb-wave-extract/scripts/setup_env.csh` 自动配好。需 Verdi license。
 
