@@ -166,7 +166,7 @@ fnx_dv 带 26 个 skill 和 1 个内置命令 `/uvm-testcase-auto`（直接输�
 | **`ic-audit-prd-spec`** | 需求对比 | PRD + 设计规格 + 寄存器描述 ➔ 需求验证报告 | 1. 架构审计 |
 | **`ic-audit-soc-prd-spec`** | 需求对比 | SoC PRD + SoC 规格 + 芯片寄存器描述（选用） ➔ SoC 级需求验证报告 | 1. 架构审计 |
 | **`ic-audit-soc-spec`** | 架构审计 | SoC 规格 + 芯片寄存器描述（选用） ➔ IP 级 / 连接级 / 系统级三份 SoC Spec 质量审查报告 | 1. 架构审计 |
-| **`ic-audit-design-auto`** | 编排 | 依次调用 `ic-audit-prd-spec`、`ic-audit-spec` ➔ 分阶段审计报告 | 1. 架构审计 |
+| **`ic-audit-design-auto`** | 编排 | 依次调用 `ic-audit-prd-spec`（没有 IP 级 PRD 时跳过）、`ic-audit-spec` ➔ 分阶段审计报告 | 1. 架构审计 |
 | **`uvm-testplan-gen-feature`**| 验证计划 | 设计规格 + 寄存器描述 ➔ 功能点报告 `doc/uvm_feature_report.md` | 2. 测试计划 |
 | **`uvm-testplan-gen-testplan`**| 验证计划 | 已审核功能点报告 + 设计规格 ➔ 验证计划 `doc/uvm_testplan.md` | 2. 测试计划 |
 | **`uvm-testplan-auto`** | 编排 | 依次调用 `gen-feature`、`gen-testplan` ➔ 功能点报告与验证计划 | 2. 测试计划 |
@@ -210,12 +210,12 @@ fnx_dv 带 26 个 skill 和 1 个内置命令 `/uvm-testcase-auto`（直接输�
 | 2 | `FNX_IP_DIR` | IP 目录，如 `/proj/chipA/verif/gsc`。验证环境生成在这里，文档写在其下的 `doc/` | 目录名必须等于 `FNX_IP_NAME`。可以还不存在（首次审查 spec、生成验证计划时），但上一级目录必须存在且可写 |
 | 3 | `FNX_SETUP_CSH` | 平台的环境加载脚本（csh），编译、仿真、看波形前加载 | fnx_dv 先进入 `FNX_IP_DIR` 再 source 它；加载后须满足下面「setup 脚本加载后须具备的」 |
 | 4 | `FNX_VIP_LIST` | 平台已有 VIP 的清单（纯文本文件） | 每行一个 VIP 目录的绝对路径，空行和 `#` 开头的行忽略，每个目录都须存在。须包含 `clk_rst_uvc`、`tilelink_uvc_v2.1`、`flx_vip`（验证环境模板固定使用；平台没有的，可由工程师放进 `FNX_IP_DIR/vip/`） |
-| 5 | `FNX_RTL_FILELIST` | 本 IP 的 RTL 文件清单（`.f`），编译和读 RTL 都用它 | 文件名为 `<IP 名>.f`（不区分大小写）；只用绝对路径；不嵌套 `-f` / `-F`；路径中不含 `$` 变量；DUT 的 RTL 逐个文件列出（或用 `-v`），可分布在多个目录；`-y` 只用于库目录。允许 `+incdir+`、`+define+`、`+libext+`、`-v`、`-y`、`//` 与 `#` 注释 |
+| 5 | `FNX_RTL_FILELIST` | 本 IP 的 RTL 文件清单（`.f`），编译和读 RTL 都用它 | 文件名为 `<IP 名>.f`（不区分大小写）；只用绝对路径；不嵌套 `-f` / `-F`；路径中不含 `$` 变量（`-y` 库目录除外：可以用 `FNX_SETUP_CSH` 设置的变量开头，如 `-y $DC_HOME/dw/sim_ver`，由 VCS 编译时展开）；DUT 的 RTL 逐个文件列出（或用 `-v`），可分布在多个目录；`-y` 只用于库目录（DesignWare、GTECH 等单元库的仿真模型也写在这里）。允许 `+incdir+`、`+define+`、`+libext+`、`-v`、`-y`、`//` 与 `#` 注释 |
 | 6 | `FNX_RTL_TOP_FILE` | DUT 顶层模块所在的 RTL 文件（`.v` / `.sv`） | 须出现在 `FNX_RTL_FILELIST` 中（文件行或 `-v`） |
 | 7 | `FNX_DUT_TOP` | DUT 顶层模块名，用于在 testbench 里例化 DUT、绑定断言 | 须是 `FNX_RTL_TOP_FILE` 中定义的一个 `module` |
 | 8 | `FNX_REG_XML` | 寄存器描述（IP-XACT 格式 XML） | 可读文件 |
 | 9 | `FNX_SPEC_FILE` | 设计规格文档（Markdown） | 可读文件。原件是 Word / PDF 时，由平台先用 `ic-docx2md` 转成 Markdown |
-| 10 | `FNX_IP_PRD_FILE` | IP 的 PRD（`.yaml`），spec 审核以它为基准 | 可读文件 |
+| 10 | `FNX_IP_PRD_FILE`（有 IP 级 PRD 时设） | IP 的 PRD（`.yaml`），PRD 需求验证以它为基准。没有时 `ic-audit-design-auto` 跳过 PRD 需求验证、只做 spec 审查；`ic-audit-prd-spec` 不能用 | 设置了则须为可读文件 |
 | 11 | `FNX_KB_FILE`（选用） | 用例知识库（Markdown，用户维护），生成用例、诊断失败时参照 | 设置了则须为可读文件；未设置时跳过知识库步骤 |
 | 12 | `FNX_CHISEL_DIR`（选用） | Chisel 源码目录，生成验证计划时从中提取状态机等 | 设置了则须为可读目录；未设置时只用 RTL |
 
@@ -235,7 +235,7 @@ fnx_dv 带 26 个 skill 和 1 个内置命令 `/uvm-testcase-auto`（直接输�
 | 项 | 说明 | 何时需要 |
 |---|---|---|
 | `vcs` 命令 | 在 `PATH` 中能找到 `vcs` | 编译、仿真 |
-| `DC_HOME` | Design Compiler 安装目录（其下 `dw/sim_ver` 为 DesignWare 仿真模型） | 编译 |
+| `.f` 里 `-y` 引用的变量（如 `DC_HOME`） | RTL 清单的 `-y` 库目录写成 `$变量/...` 时，该变量须由 setup 设置（例如 DesignWare 仿真模型 `-y $DC_HOME/dw/sim_ver`）；`.f` 没引用就不需要 | 编译 |
 | `VERDI_HOME` | Verdi 安装目录。读取波形时从中自动查找 Verdi 自带的 Python | 看波形、带波形编译时 |
 | `DESIGNWARE_HOME` | Synopsys DesignWare（SVT VIP）安装目录 | 用到 Synopsys SVT VIP 时 |
 
